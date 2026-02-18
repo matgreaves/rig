@@ -485,7 +485,7 @@ Init hooks receive the service's ingress attributes as env vars. Builtin service
 
 ## Attribute Naming & Environment Variable Mapping
 
-Three levels of attributes, with prefix rules that make the common case match well-known env vars exactly:
+Three levels of attributes, with simple rules: egresses are always prefixed by name, init hooks receive ingress attributes with the default ingress unprefixed.
 
 ### Attribute Levels
 
@@ -495,13 +495,16 @@ Three levels of attributes, with prefix rules that make the common case match we
 
 ### Env Var Mapping Rules
 
-**For ingresses (own ingress details, init hook context):**
-- Default/single ingress: `ATTRNAME` (e.g., `PGHOST`, `PGPORT`)
-- Named ingress (multiple): `INGRESSNAME_ATTRNAME` (e.g., `ADMIN_PGHOST`)
+**For init hooks (own service's ingress attributes only — no egresses):**
+- Default ingress: `ATTRNAME` (e.g., `PGHOST`, `PGPORT`) — unprefixed
+- Additional named ingresses: `INGRESSNAME_ATTRNAME` (e.g., `ADMIN_PGHOST`)
 
-**For egresses (injected into a service):**
-- Single egress: `ATTRNAME` (no prefix — `PGHOST`, `PGPORT`)
-- Named egresses (multiple): `EGRESSNAME_ATTRNAME` (e.g., `DATABASE_PGHOST`, `TEMPORAL_TEMPORAL_ADDRESS`)
+Init hooks receive only the service's own ingress attributes — they have no access to egress attributes. This is deliberate: init hooks exist to configure *this* service (seed the database, create a namespace), not to reach its dependencies. The default ingress is unprefixed so that ecosystem tools (`psql`, `temporal`, `redis-cli`) just work. Additional named ingresses are prefixed by their ingress name to avoid collisions.
+
+**For egresses (injected into a service's env and templates):**
+- Always prefixed by egress name: `EGRESSNAME_ATTRNAME` (e.g., `DATABASE_PGHOST`, `TEMPORAL_TEMPORAL_ADDRESS`)
+
+Egresses are always prefixed, even when there's only one. This means adding a second egress to a service never changes the env var names of the first — no silent breakage, no surprises. The egress name is always part of the contract.
 
 **Service-level attributes**: always unprefixed (`RIG_TEMP_DIR`, `RIG_ENV_DIR`, `RIG_SERVICE`, `RIG_INSTANCE`)
 
@@ -510,8 +513,8 @@ Three levels of attributes, with prefix rules that make the common case match we
 A postgres service with a default ingress publishes attributes `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
 
 - Its **init hook** receives them unprefixed → `psql` and migration tools just work
-- A service with a **single egress** to postgres receives them unprefixed → standard postgres env vars, zero config
-- A service with **two egresses** `orders_db` and `users_db` receives them prefixed → `ORDERS_DB_PGHOST`, `USERS_DB_PGHOST`
+- A service with an egress `database` to postgres receives them as `DATABASE_PGHOST`, `DATABASE_PGPORT`, etc.
+- A service with egresses `orders_db` and `users_db` to two postgres instances receives `ORDERS_DB_PGHOST`, `USERS_DB_PGHOST` — same rule, no special case
 
 ---
 
@@ -525,8 +528,8 @@ Uses `os.Expand` from the Go stdlib — no custom parser needed.
 
 The full merged `map[string]string` of:
 - Service-level attributes (`RIG_TEMP_DIR`, `RIG_ENV_DIR`, `RIG_SERVICE`, etc.)
-- Resolved ingress attributes (with prefix rules)
-- Resolved egress attributes (with prefix rules)
+- Resolved ingress attributes (unprefixed for default/single, prefixed for named)
+- Resolved egress attributes (always prefixed by egress name)
 
 ### Example
 
@@ -766,17 +769,16 @@ func TestOrders(t *testing.T) {
 
 ## Smart Defaults
 
-### Default Ingress
+### No Ingresses
 
-A service with no explicit ingresses gets a single HTTP ingress named `"default"`:
+A service with no explicit ingresses is valid — it simply has no exposed endpoints and no health checks. This is appropriate for workers, scripts, cron jobs, and other services that only consume from dependencies.
 
 ```go
-rig.Service("my-api", rig.Process("./my-api"))
-// equivalent to:
-rig.Service("my-api",
-    rig.Process("./my-api"),
-    rig.Ingress("default", rig.HTTP),
+rig.Service("worker", rig.Process("./my-worker"),
+    rig.Egress("queue", "rabbitmq"),
 )
+// worker has no ingresses — no ports allocated, no health checks.
+// Other services cannot reference it as an egress target.
 ```
 
 ### Single Ingress Shorthand
@@ -849,8 +851,13 @@ type CallbackRequest struct {
     RequestID string         `json:"request_id"` // unique ID for correlation
     Name      string         `json:"name"`       // handler name (e.g., "write-order-config")
     Type      string         `json:"type"`       // "hook", "publish", "start", "ready"
-    Wiring    *WiringContext `json:"wiring"`     // resolved ingresses, egresses, temp dir, attributes
+    Wiring    *WiringContext `json:"wiring"`     // context depends on hook type (see below)
 }
+
+// WiringContext contents vary by callback type:
+//   prestart hook: ingresses + egresses + temp dir + env dir
+//   init hook:     ingresses only + temp dir (no egresses — init targets this service, not its dependencies)
+//   custom type callbacks (publish/start/ready): type-specific
 
 type CallbackResponse struct {
     RequestID string         `json:"request_id"` // matches the request
@@ -1135,7 +1142,7 @@ Client-side function execution uses the SSE event stream for requests and regula
 8. The `WaitFor` matches, the lifecycle step resumes
 
 ```
-SSE event (server → client):
+SSE event (server → client) — prestart hook example (includes egresses):
 {
     "type": "callback.request",
     "service": "order-service",
@@ -1151,6 +1158,8 @@ SSE event (server → client):
         }
     }
 }
+
+// For an init hook, wiring would contain ingresses only — no egresses field.
 
 POST /environments/{id}/callbacks/cb-a1b2c3 (client → server):
 {
@@ -1251,18 +1260,16 @@ rig/
 - `server/ports.go` — random port allocator using OS-assigned ports (`:0` bind), in-process tracking for active environments
 - `server/wiring.go` — attribute → env var mapping, prefix rules, template expansion
 
-### Phase 3 — Lifecycle Orchestration
+### Phase 3 — Lifecycle Orchestration + Health Checks
 - `server/lifecycle.go` — the lifecycle sequence using `run`
 - `server/orchestrator.go` — builds `run.Group` from spec, coordinates artifact + service phases
 - `server/service/type.go` — `ServiceType` interface + registry
 - `server/service/process.go` — simplest concrete type
-- In-process integration tests that exercise `orchestrate()` directly with process-based services (small test binaries in `testdata/`). These validate the lifecycle sequence, event log ordering, egress-driven dependency waiting, and teardown behaviour without the HTTP layer. Catches lifecycle bugs early before Phase 5 adds the API surface.
+- `server/ready/` — TCP, HTTP, gRPC readiness checks with exponential backoff, integrated into the lifecycle `ready` step
+- Small test binaries in `testdata/` (HTTP echo server, gRPC greeter) for integration testing
+- In-process integration tests that exercise `orchestrate()` directly with process-based services and real health checks against TCP/HTTP endpoints. These validate the lifecycle sequence, event log ordering, egress-driven dependency waiting, health check behaviour, and teardown without the HTTP layer. Catches lifecycle bugs early before Phase 4 adds the API surface.
 
-### Phase 4 — Health Checks
-- `server/ready/` — TCP, HTTP, gRPC readiness checks with exponential backoff
-- Integration with lifecycle `ready` step
-
-### Phase 5 — HTTP API + SSE + In-Process End-to-End Tests
+### Phase 4 — HTTP API + SSE + In-Process End-to-End Tests
 - `server/server.go` — HTTP API: `POST /environments`, `DELETE /environments/{id}`, `GET /environments/{id}`, `POST /environments/{id}/callbacks/{request_id}`
 - `server/sse.go` — SSE stream handler: `GET /environments/{id}/events` streams lifecycle events, callback requests, and service logs to clients
 - `server/idle.go` — idle timeout, auto-shutdown when no active environments
@@ -1270,42 +1277,42 @@ rig/
 - Tests use real process-based services (small test binaries in `testdata/`) to validate the lifecycle, wiring, template expansion, callback coordination, and health checks work correctly through the HTTP + SSE API
 - These tests remain valuable as the system evolves because they test the public contract, not implementation details
 
-### Phase 6 — Artifact System
+### Phase 5 — Artifact System
 - `server/artifact/cache.go` — content-addressable cache with file locks
 - `server/artifact/resolver.go` — parallel resolution with dedup
 - `server/artifact/docker.go` — Docker image pre-pull
 - `server/artifact/gobuild.go` — Go module compilation + source hash cache strategy
 - `server/service/gobuild.go` — GoBuild service type (first type with a real artifact)
 
-### Phase 7 — Go Client SDK
+### Phase 6 — Go Client SDK
 - `client/client.go` — HTTP client, `Up`/`Down`
 - `client/stream.go` — SSE stream reader + event loop (callback dispatch, log streaming, terminal event detection)
 - `client/server.go` — rigd auto-management (download, cache, start with file lock, address file discovery)
 - `client/builder.go` — fluent builder API
 - `client/handler.go` — inline func registration
 
-### Phase 8 — Container Support
+### Phase 7 — Container Support
 - `server/service/container.go` — Docker container lifecycle via Docker SDK
 - Port mapping (host port ↔ container port)
 - Integration with artifact phase (pre-pull)
 
-### Phase 9 — Builtin Service Types
+### Phase 8 — Builtin Service Types
 - `server/service/postgres.go` — Postgres container + PG attribute publishing
 - `server/service/temporal.go` — Temporal dev server (download binary, generate namespace)
 - `server/service/redis.go` — Redis container
 - Built-in hooks: `initdb`, `create-namespace`, `create-search-attributes`
 
-### Phase 10 — Client-Side Service Types
+### Phase 9 — Client-Side Service Types
 - Extend callback event types for full lifecycle delegation (publish, start, ready)
 - `client/type.go` — client-side `ServiceType` registration (handlers dispatched via the SSE event loop)
 - Prove a custom type works end-to-end
 
-### Phase 11 — Polish & Multi-Language
+### Phase 10 — Polish & rigd CLI
 - CLI for `rigd` (start, status, logs, environment introspection)
-- TypeScript SDK (HTTP client + SSE reader — no server needed, no protobuf needed)
-- Python SDK (HTTP client + SSE reader)
-- Shared conformance test suite
-- See [VISION.md](./VISION.md) for future direction: transparent proxy layer, live dashboard, session recording & replay
+- Error message quality review across all phases
+- Timeout diagnostic messages (which service is stuck, what it's waiting on, dependency status)
+- Documentation: godoc on all public API surfaces in `client/`
+- Example test files demonstrating common patterns (postgres + service, temporal workflow, multi-service graph)
 
 ---
 
@@ -1629,7 +1636,7 @@ Set `RIG_PRESERVE_ON_FAILURE=true` to keep all temp directories, log files, and 
 
 ```go
 t.Cleanup(func() {
-    if t.Failed() && os.Gerig("RIG_PRESERVE_ON_FAILURE") == "true" {
+    if t.Failed() && os.Getenv("RIG_PRESERVE_ON_FAILURE") == "true" {
         t.Logf("rig: preserving environment state for debugging:")
         t.Logf("  environment dir: %s", resolved.EnvDir)
         for name, svc := range resolved.Services {
