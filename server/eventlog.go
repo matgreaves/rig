@@ -88,7 +88,13 @@ type Event struct {
 	Callback    *CallbackRequest  `json:"callback,omitempty"`
 	Result      *CallbackResponse `json:"result,omitempty"`
 	Error       string            `json:"error,omitempty"`
-	Timestamp   time.Time         `json:"timestamp"`
+	// Ingresses is populated on environment.up. It maps service name to a
+	// map of ingress name to endpoint, giving clients everything they need
+	// to connect to any service without a follow-up GET request.
+	// It uses spec.Endpoint directly — the same type client libraries are
+	// built against — so test and production wiring are handled identically.
+	Ingresses map[string]map[string]spec.Endpoint `json:"ingresses,omitempty"`
+	Timestamp time.Time                            `json:"timestamp"`
 }
 
 // EventLog is a persistent, ordered event log. Events are appended with
