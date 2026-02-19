@@ -24,20 +24,7 @@ type Process struct{}
 
 // Publish resolves ingress endpoints for a process service.
 func (Process) Publish(_ context.Context, params PublishParams) (map[string]spec.Endpoint, error) {
-	endpoints := make(map[string]spec.Endpoint, len(params.Ingresses))
-	for name, ingSpec := range params.Ingresses {
-		port, ok := params.Ports[name]
-		if !ok {
-			return nil, fmt.Errorf("no port allocated for ingress %q", name)
-		}
-		endpoints[name] = spec.Endpoint{
-			Host:       "127.0.0.1",
-			Port:       port,
-			Protocol:   ingSpec.Protocol,
-			Attributes: ingSpec.Attributes,
-		}
-	}
-	return endpoints, nil
+	return PublishLocalEndpoints(params)
 }
 
 // Runner returns a run.Process that executes the configured binary.

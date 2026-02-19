@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +30,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 		server.NewPortAllocator(),
 		reg,
 		t.TempDir(),
-		0, // idle timeout disabled
+		0,           // idle timeout disabled
+		t.TempDir(), // isolated artifact cache
 	)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
@@ -435,7 +438,7 @@ func TestServer_IdleTimer(t *testing.T) {
 	reg.Register("process", service.Process{})
 
 	const idleTimeout = 200 * time.Millisecond
-	s := server.NewServer(server.NewPortAllocator(), reg, t.TempDir(), idleTimeout)
+	s := server.NewServer(server.NewPortAllocator(), reg, t.TempDir(), idleTimeout, t.TempDir())
 	ts := httptest.NewServer(s)
 	defer ts.Close()
 
@@ -445,5 +448,113 @@ func TestServer_IdleTimer(t *testing.T) {
 		// expected
 	case <-time.After(5 * time.Second):
 		t.Fatal("idle timer did not fire within timeout")
+	}
+}
+
+func TestServer_GoServiceType(t *testing.T) {
+	root := moduleRoot(t)
+	echoModule := filepath.Join(root, "testdata", "services", "echo")
+
+	cacheDir := t.TempDir()
+
+	reg := service.NewRegistry()
+	reg.Register("go", service.Go{})
+
+	s := server.NewServer(
+		server.NewPortAllocator(),
+		reg,
+		t.TempDir(),
+		0,        // idle timeout disabled
+		cacheDir, // isolated artifact cache
+	)
+	ts := httptest.NewServer(s)
+	t.Cleanup(ts.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// POST /environments with "go" service type.
+	envSpec := map[string]any{
+		"name": "test-go-service",
+		"services": map[string]any{
+			"echo": map[string]any{
+				"type":   "go",
+				"config": mustJSON(t, service.GoServiceConfig{Module: echoModule}),
+				"ingresses": map[string]any{
+					"default": map[string]any{"protocol": "http"},
+				},
+			},
+		},
+	}
+	body := mustJSON(t, envSpec)
+	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: status %d, want 201", resp.StatusCode)
+	}
+
+	var created map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	id := created["id"]
+	if id == "" {
+		t.Fatal("create response missing 'id'")
+	}
+
+	// Wait for environment.up, which includes the resolved endpoints.
+	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+	upEv := waitForEvent(t, ctx, events, func(e server.Event) bool {
+		return e.Type == server.EventEnvironmentUp
+	})
+
+	echoIngresses, ok := upEv.Ingresses["echo"]
+	if !ok {
+		t.Fatal("environment.up missing 'echo' ingresses")
+	}
+	ep, ok := echoIngresses["default"]
+	if !ok || ep.Port == 0 {
+		t.Fatal("environment.up missing 'echo' default ingress endpoint")
+	}
+
+	// Hit the echo service to confirm it is reachable.
+	healthURL := fmt.Sprintf("http://%s:%d/health", ep.Host, ep.Port)
+	hresp, err := http.Get(healthURL)
+	if err != nil {
+		t.Fatalf("health check: %v", err)
+	}
+	hresp.Body.Close()
+	if hresp.StatusCode != http.StatusOK {
+		t.Errorf("health: %d, want 200", hresp.StatusCode)
+	}
+
+	// Verify the artifact was cached: the binary should exist in cacheDir.
+	binaryFound := false
+	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if d.Name() == "binary" {
+			binaryFound = true
+		}
+		return nil
+	})
+	if !binaryFound {
+		t.Error("compiled binary not found in cache directory")
+	}
+
+	// Tear down.
+	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+	delResp, err := http.DefaultClient.Do(delReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusOK {
+		t.Errorf("DELETE: %d, want 200", delResp.StatusCode)
 	}
 }
