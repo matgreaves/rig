@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/matgreaves/rig/server/artifact"
 	"github.com/matgreaves/rig/server/ready"
 	"github.com/matgreaves/rig/server/service"
 	"github.com/matgreaves/rig/spec"
@@ -18,8 +19,9 @@ type serviceContext struct {
 	name       string
 	spec       spec.Service
 	svcType    service.Type
-	ingresses  map[string]spec.Endpoint // populated after publish
-	egresses   map[string]spec.Endpoint // populated after wiring
+	ingresses  map[string]spec.Endpoint   // populated after publish
+	egresses   map[string]spec.Endpoint   // populated after wiring
+	artifacts  map[string]artifact.Output // populated by artifact phase (shared, read-only during service phase)
 	tempDir    string
 	envDir     string
 	log        *EventLog
@@ -196,6 +198,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Spec:        sc.spec,
 			Ingresses:   sc.ingresses,
 			Egresses:    sc.egresses,
+			Artifacts:   sc.artifacts,
 			Env:         env,
 			Args:        args,
 			TempDir:     sc.tempDir,

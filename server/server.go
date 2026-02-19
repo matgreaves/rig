@@ -19,6 +19,7 @@ type Server struct {
 	ports    *PortAllocator
 	registry *service.Registry
 	tempBase string
+	cacheDir string // artifact cache directory; empty → Orchestrator default (~/.rig/cache/)
 
 	mu   sync.Mutex
 	envs map[string]*envInstance
@@ -38,17 +39,20 @@ type envInstance struct {
 
 // NewServer creates a Server and registers all HTTP routes.
 // Pass idleTimeout = 0 to disable automatic shutdown.
+// Pass cacheDir = "" to use the default artifact cache (~/.rig/cache/).
 func NewServer(
 	ports *PortAllocator,
 	registry *service.Registry,
 	tempBase string,
 	idleTimeout time.Duration,
+	cacheDir string,
 ) *Server {
 	s := &Server{
 		mux:      http.NewServeMux(),
 		ports:    ports,
 		registry: registry,
 		tempBase: tempBase,
+		cacheDir: cacheDir,
 		envs:     make(map[string]*envInstance),
 		idle:     NewIdleTimer(idleTimeout),
 	}
@@ -103,6 +107,7 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 		Registry: s.registry,
 		Log:      envLog,
 		TempBase: s.tempBase,
+		CacheDir: s.cacheDir,
 	}
 
 	runner, id, err := orch.Orchestrate(&env)
