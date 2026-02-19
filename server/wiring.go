@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -10,9 +11,13 @@ import (
 
 // BuildServiceEnv builds the full environment variable map for a service
 // during its start phase. This includes:
+//   - RIG_WIRING: full wiring as JSON for rig-aware services
 //   - Service-level attributes (RIG_TEMP_DIR, RIG_ENV_DIR, etc.)
 //   - Own ingress attributes (HOST/PORT for default, prefixed for named)
 //   - Egress attributes (always prefixed by egress name)
+//
+// Rig-aware services should read RIG_WIRING. The flat env vars are a
+// convenience fallback for services that don't know about rig.
 func BuildServiceEnv(
 	serviceName string,
 	ingresses map[string]spec.Endpoint,
@@ -22,7 +27,18 @@ func BuildServiceEnv(
 ) map[string]string {
 	env := make(map[string]string)
 
-	// Service-level attributes.
+	// RIG_WIRING: structured wiring as JSON. Preferred over flat env vars.
+	wiring := WiringContext{
+		Ingresses: ingresses,
+		Egresses:  egresses,
+		TempDir:   tempDir,
+		EnvDir:    envDir,
+	}
+	if b, err := json.Marshal(wiring); err == nil {
+		env["RIG_WIRING"] = string(b)
+	}
+
+	// Flat env vars: fallback for services that don't read RIG_WIRING.
 	env["RIG_TEMP_DIR"] = tempDir
 	env["RIG_ENV_DIR"] = envDir
 	env["RIG_SERVICE"] = serviceName

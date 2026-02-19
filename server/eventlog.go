@@ -95,7 +95,7 @@ type Event struct {
 // monotonically increasing sequence numbers. Subscribers can replay from
 // any point. WaitFor scans the existing log before blocking.
 type EventLog struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	events []Event
 	seq    uint64
 	notify chan struct{} // closed and replaced on each new event
@@ -127,8 +127,8 @@ func (l *EventLog) Publish(event Event) {
 
 // Events returns a snapshot of all events in the log.
 func (l *EventLog) Events() []Event {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	out := make([]Event, len(l.events))
 	copy(out, l.events)
 	return out
@@ -136,12 +136,12 @@ func (l *EventLog) Events() []Event {
 
 // Since returns all events with sequence number > seq.
 func (l *EventLog) Since(seq uint64) []Event {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.eventsSince(seq)
 }
 
-// eventsSince returns events with Seq > seq. Caller must hold l.mu.
+// eventsSince returns events with Seq > seq. Caller must hold at least l.mu.RLock.
 // Seq numbers are 1-indexed and contiguous, so events after seq start
 // at slice index seq.
 func (l *EventLog) eventsSince(seq uint64) []Event {
@@ -170,10 +170,10 @@ func (l *EventLog) Subscribe(ctx context.Context, fromSeq uint64, filter func(Ev
 
 		for {
 			// Grab current state under lock.
-			l.mu.Lock()
+			l.mu.RLock()
 			batch := l.eventsSince(cursor)
 			notify := l.notify
-			l.mu.Unlock()
+			l.mu.RUnlock()
 
 			// Deliver buffered events.
 			for _, e := range batch {
@@ -208,26 +208,26 @@ func (l *EventLog) Subscribe(ctx context.Context, fromSeq uint64, filter func(Ev
 // immediately. Otherwise blocks until a matching event is published or the
 // context is cancelled.
 func (l *EventLog) WaitFor(ctx context.Context, match func(Event) bool) (Event, error) {
-	// First, scan existing events under lock.
-	l.mu.Lock()
+	// First, scan existing events under read lock.
+	l.mu.RLock()
 	for _, e := range l.events {
 		if match(e) {
-			l.mu.Unlock()
+			l.mu.RUnlock()
 			return e, nil
 		}
 	}
 	cursor := l.seq
 	notify := l.notify
-	l.mu.Unlock()
+	l.mu.RUnlock()
 
 	// Not found in existing log — wait for new events.
 	for {
 		select {
 		case <-notify:
-			l.mu.Lock()
+			l.mu.RLock()
 			batch := l.eventsSince(cursor)
 			notify = l.notify
-			l.mu.Unlock()
+			l.mu.RUnlock()
 
 			for _, e := range batch {
 				if match(e) {
