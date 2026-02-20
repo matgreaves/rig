@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -106,9 +104,10 @@ func waitForEvent(t *testing.T, ctx context.Context, ch <-chan server.Event, mat
 	}
 }
 
-// --- tests ---
+// --- HTTP API contract tests (no binaries needed) ---
 
 func TestServer_NotFound(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(t)
 
 	cases := []struct {
@@ -134,6 +133,7 @@ func TestServer_NotFound(t *testing.T) {
 }
 
 func TestServer_ValidationErrors(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(t)
 
 	body := mustJSON(t, map[string]any{
@@ -159,281 +159,8 @@ func TestServer_ValidationErrors(t *testing.T) {
 	}
 }
 
-func TestServer_CreateAndStream(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
-	ts := newTestServer(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// POST /environments
-	envSpec := map[string]any{
-		"name": "test-create-stream",
-		"services": map[string]any{
-			"echo": map[string]any{
-				"type":   "process",
-				"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
-				"ingresses": map[string]any{
-					"default": map[string]any{"protocol": "http"},
-				},
-			},
-		},
-	}
-	body := mustJSON(t, envSpec)
-	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create: status %d, want 201", resp.StatusCode)
-	}
-
-	var created map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	id := created["id"]
-	if id == "" {
-		t.Fatal("create response missing 'id'")
-	}
-
-	// Subscribe to the SSE stream and wait for environment.up, which
-	// carries the fully resolved wiring for all services.
-	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
-
-	upEv := waitForEvent(t, ctx, events, func(e server.Event) bool {
-		return e.Type == server.EventEnvironmentUp
-	})
-
-	echoIngresses, ok := upEv.Ingresses["echo"]
-	if !ok {
-		t.Fatal("environment.up missing 'echo' ingresses")
-	}
-	ep, ok := echoIngresses["default"]
-	if !ok || ep.Port == 0 {
-		t.Fatal("environment.up missing 'echo' default ingress endpoint")
-	}
-
-	// Hit the echo service directly to confirm it is reachable.
-	healthURL := fmt.Sprintf("http://%s:%d/health", ep.Host, ep.Port)
-	hresp, err := http.Get(healthURL)
-	if err != nil {
-		t.Fatalf("health check: %v", err)
-	}
-	hresp.Body.Close()
-	if hresp.StatusCode != http.StatusOK {
-		t.Errorf("health: %d, want 200", hresp.StatusCode)
-	}
-
-	// DELETE /environments/{id}
-	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delResp.Body.Close()
-	if delResp.StatusCode != http.StatusOK {
-		t.Errorf("DELETE: %d, want 200", delResp.StatusCode)
-	}
-}
-
-func TestServer_GetEnvironment(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
-	ts := newTestServer(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	envSpec := map[string]any{
-		"name": "test-get-env",
-		"services": map[string]any{
-			"echo": map[string]any{
-				"type":   "process",
-				"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
-				"ingresses": map[string]any{
-					"default": map[string]any{"protocol": "http"},
-				},
-			},
-		},
-	}
-	body := mustJSON(t, envSpec)
-	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var created map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	id := created["id"]
-
-	// Wait for the environment to be fully up before inspecting via GET.
-	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
-	waitForEvent(t, ctx, events, func(e server.Event) bool {
-		return e.Type == server.EventEnvironmentUp
-	})
-
-	getResp, err := http.Get(ts.URL + "/environments/" + id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer getResp.Body.Close()
-
-	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET: status %d, want 200", getResp.StatusCode)
-	}
-
-	var resolved spec.ResolvedEnvironment
-	if err := json.NewDecoder(getResp.Body).Decode(&resolved); err != nil {
-		t.Fatal(err)
-	}
-	if resolved.ID != id {
-		t.Errorf("resolved.ID = %q, want %q", resolved.ID, id)
-	}
-	echoSvc, ok := resolved.Services["echo"]
-	if !ok {
-		t.Fatal("'echo' not in resolved services")
-	}
-	if echoSvc.Status != spec.StatusReady {
-		t.Errorf("echo status = %q, want %q", echoSvc.Status, spec.StatusReady)
-	}
-	ep, ok := echoSvc.Ingresses["default"]
-	if !ok || ep.Port == 0 {
-		t.Fatal("'default' ingress not resolved in GET response")
-	}
-
-	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
-	delResp, _ := http.DefaultClient.Do(delReq)
-	delResp.Body.Close()
-}
-
-func TestServer_FailurePropagation(t *testing.T) {
-	failBin := buildTestBinary(t, "testdata/services/fail")
-	ts := newTestServer(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// The fail service has no ingresses — it exits immediately on start.
-	envSpec := map[string]any{
-		"name": "test-fail-env",
-		"services": map[string]any{
-			"broken": map[string]any{
-				"type":   "process",
-				"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
-			},
-		},
-	}
-	body := mustJSON(t, envSpec)
-	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create: status %d, want 201", resp.StatusCode)
-	}
-
-	var created map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	id := created["id"]
-
-	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
-
-	// environment.down should arrive without a preceding environment.up.
-	waitForEvent(t, ctx, events, func(e server.Event) bool {
-		return e.Type == server.EventEnvironmentDown
-	})
-
-	// DELETE should still succeed — environment is tracked until explicitly removed.
-	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delResp.Body.Close()
-	if delResp.StatusCode != http.StatusOK {
-		t.Errorf("DELETE after failure: %d, want 200", delResp.StatusCode)
-	}
-}
-
-func TestServer_ConcurrentDelete(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
-	ts := newTestServer(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	envSpec := map[string]any{
-		"name": "test-concurrent-delete",
-		"services": map[string]any{
-			"echo": map[string]any{
-				"type":   "process",
-				"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
-				"ingresses": map[string]any{
-					"default": map[string]any{"protocol": "http"},
-				},
-			},
-		},
-	}
-	body := mustJSON(t, envSpec)
-	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	var created map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	id := created["id"]
-
-	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
-	waitForEvent(t, ctx, events, func(e server.Event) bool {
-		return e.Type == server.EventEnvironmentUp
-	})
-
-	// Issue two concurrent DELETEs — exactly one should succeed (200) and
-	// the other should get 404.
-	type result struct {
-		status int
-	}
-	results := make(chan result, 2)
-	for range 2 {
-		go func() {
-			req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
-			r, err := http.DefaultClient.Do(req)
-			if err != nil {
-				results <- result{0}
-				return
-			}
-			r.Body.Close()
-			results <- result{r.StatusCode}
-		}()
-	}
-
-	statuses := make(map[int]int)
-	for range 2 {
-		r := <-results
-		statuses[r.status]++
-	}
-	if statuses[http.StatusOK] != 1 {
-		t.Errorf("expected exactly 1 DELETE to return 200, got: %v", statuses)
-	}
-	if statuses[http.StatusNotFound] != 1 {
-		t.Errorf("expected exactly 1 DELETE to return 404, got: %v", statuses)
-	}
-}
-
 func TestServer_IdleTimer(t *testing.T) {
+	t.Parallel()
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 
@@ -451,110 +178,203 @@ func TestServer_IdleTimer(t *testing.T) {
 	}
 }
 
-func TestServer_GoServiceType(t *testing.T) {
-	root := moduleRoot(t)
-	echoModule := filepath.Join(root, "testdata", "services", "echo", "cmd")
+// --- integration tests (share binaries via parent test) ---
 
-	cacheDir := t.TempDir()
+// TestServer runs integration tests that exercise the HTTP API with real
+// service binaries. Binaries are built once and shared across parallel subtests.
+func TestServer(t *testing.T) {
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
+	failBin := buildTestBinary(t, "testdata/services/fail")
+	ts := newTestServer(t)
 
-	reg := service.NewRegistry()
-	reg.Register("go", service.Go{})
+	t.Run("GetEnvironment", func(t *testing.T) {
+		t.Parallel()
 
-	s := server.NewServer(
-		server.NewPortAllocator(),
-		reg,
-		t.TempDir(),
-		0,        // idle timeout disabled
-		cacheDir, // isolated artifact cache
-	)
-	ts := httptest.NewServer(s)
-	t.Cleanup(ts.Close)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// POST /environments with "go" service type.
-	envSpec := map[string]any{
-		"name": "test-go-service",
-		"services": map[string]any{
-			"echo": map[string]any{
-				"type":   "go",
-				"config": mustJSON(t, service.GoServiceConfig{Module: echoModule}),
-				"ingresses": map[string]any{
-					"default": map[string]any{"protocol": "http"},
+		envSpec := map[string]any{
+			"name": "test-get-env",
+			"services": map[string]any{
+				"echo": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
 				},
 			},
-		},
-	}
-	body := mustJSON(t, envSpec)
-	resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create: status %d, want 201", resp.StatusCode)
-	}
+		var created map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		id := created["id"]
 
-	var created map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatal(err)
-	}
-	id := created["id"]
-	if id == "" {
-		t.Fatal("create response missing 'id'")
-	}
+		// Wait for the environment to be fully up before inspecting via GET.
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		waitForEvent(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentUp
+		})
 
-	// Wait for environment.up, which includes the resolved endpoints.
-	events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
-	upEv := waitForEvent(t, ctx, events, func(e server.Event) bool {
-		return e.Type == server.EventEnvironmentUp
+		getResp, err := http.Get(ts.URL + "/environments/" + id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer getResp.Body.Close()
+
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("GET: status %d, want 200", getResp.StatusCode)
+		}
+
+		var resolved spec.ResolvedEnvironment
+		if err := json.NewDecoder(getResp.Body).Decode(&resolved); err != nil {
+			t.Fatal(err)
+		}
+		if resolved.ID != id {
+			t.Errorf("resolved.ID = %q, want %q", resolved.ID, id)
+		}
+		echoSvc, ok := resolved.Services["echo"]
+		if !ok {
+			t.Fatal("'echo' not in resolved services")
+		}
+		if echoSvc.Status != spec.StatusReady {
+			t.Errorf("echo status = %q, want %q", echoSvc.Status, spec.StatusReady)
+		}
+		ep, ok := echoSvc.Ingresses["default"]
+		if !ok || ep.Port == 0 {
+			t.Fatal("'default' ingress not resolved in GET response")
+		}
+
+		delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+		delResp, _ := http.DefaultClient.Do(delReq)
+		delResp.Body.Close()
 	})
 
-	echoIngresses, ok := upEv.Ingresses["echo"]
-	if !ok {
-		t.Fatal("environment.up missing 'echo' ingresses")
-	}
-	ep, ok := echoIngresses["default"]
-	if !ok || ep.Port == 0 {
-		t.Fatal("environment.up missing 'echo' default ingress endpoint")
-	}
+	t.Run("FailurePropagation", func(t *testing.T) {
+		t.Parallel()
 
-	// Hit the echo service to confirm it is reachable.
-	healthURL := fmt.Sprintf("http://%s:%d/health", ep.Host, ep.Port)
-	hresp, err := http.Get(healthURL)
-	if err != nil {
-		t.Fatalf("health check: %v", err)
-	}
-	hresp.Body.Close()
-	if hresp.StatusCode != http.StatusOK {
-		t.Errorf("health: %d, want 200", hresp.StatusCode)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-	// Verify the artifact was cached: the binary should exist in cacheDir.
-	binaryFound := false
-	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
+		// The fail service has no ingresses — it exits immediately on start.
+		envSpec := map[string]any{
+			"name": "test-fail-env",
+			"services": map[string]any{
+				"broken": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
+				},
+			},
 		}
-		if d.Name() == "binary" {
-			binaryFound = true
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
 		}
-		return nil
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create: status %d, want 201", resp.StatusCode)
+		}
+
+		var created map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		id := created["id"]
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+
+		// environment.down should arrive without a preceding environment.up.
+		waitForEvent(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentDown
+		})
+
+		// DELETE should still succeed — environment is tracked until explicitly removed.
+		delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+		delResp, err := http.DefaultClient.Do(delReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		delResp.Body.Close()
+		if delResp.StatusCode != http.StatusOK {
+			t.Errorf("DELETE after failure: %d, want 200", delResp.StatusCode)
+		}
 	})
-	if !binaryFound {
-		t.Error("compiled binary not found in cache directory")
-	}
 
-	// Tear down.
-	delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
-	delResp, err := http.DefaultClient.Do(delReq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	delResp.Body.Close()
-	if delResp.StatusCode != http.StatusOK {
-		t.Errorf("DELETE: %d, want 200", delResp.StatusCode)
-	}
+	t.Run("ConcurrentDelete", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		envSpec := map[string]any{
+			"name": "test-concurrent-delete",
+			"services": map[string]any{
+				"echo": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		id := created["id"]
+
+		events := sseEvents(t, ctx, fmt.Sprintf("%s/environments/%s/events", ts.URL, id))
+		waitForEvent(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentUp
+		})
+
+		// Issue two concurrent DELETEs — exactly one should succeed (200) and
+		// the other should get 404.
+		type result struct {
+			status int
+		}
+		results := make(chan result, 2)
+		for range 2 {
+			go func() {
+				req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/environments/%s", ts.URL, id), nil)
+				r, err := http.DefaultClient.Do(req)
+				if err != nil {
+					results <- result{0}
+					return
+				}
+				r.Body.Close()
+				results <- result{r.StatusCode}
+			}()
+		}
+
+		statuses := make(map[int]int)
+		for range 2 {
+			r := <-results
+			statuses[r.status]++
+		}
+		if statuses[http.StatusOK] != 1 {
+			t.Errorf("expected exactly 1 DELETE to return 200, got: %v", statuses)
+		}
+		if statuses[http.StatusNotFound] != 1 {
+			t.Errorf("expected exactly 1 DELETE to return 404, got: %v", statuses)
+		}
+	})
 }
