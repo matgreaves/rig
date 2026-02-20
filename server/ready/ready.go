@@ -48,7 +48,10 @@ func ForEndpoint(ep spec.Endpoint, readySpec *spec.ReadySpec) Checker {
 
 // Poll repeatedly calls checker.Check with exponential backoff until
 // the check succeeds or the context is cancelled/timed out.
-func Poll(ctx context.Context, host string, port int, checker Checker, readySpec *spec.ReadySpec) error {
+//
+// If onFailure is non-nil it is called after each failed probe with the
+// check error, giving the caller an opportunity to log or emit events.
+func Poll(ctx context.Context, host string, port int, checker Checker, readySpec *spec.ReadySpec, onFailure func(err error)) error {
 	timeout := DefaultTimeout
 	interval := DefaultInitialInterval
 
@@ -64,13 +67,23 @@ func Poll(ctx context.Context, host string, port int, checker Checker, readySpec
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	var lastErr error
+
 	for {
 		if err := checker.Check(ctx, host, port); err == nil {
 			return nil
+		} else {
+			lastErr = err
+			if onFailure != nil {
+				onFailure(err)
+			}
 		}
 
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("readiness check failed after %s (last error: %v)", timeout, lastErr)
+			}
 			return fmt.Errorf("readiness check failed: %w", ctx.Err())
 		case <-time.After(interval):
 		}

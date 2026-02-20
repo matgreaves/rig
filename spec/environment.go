@@ -9,6 +9,11 @@ type Environment struct {
 
 	// Services maps service names to their specs.
 	Services map[string]Service `json:"services"`
+
+	// Observe enables transparent traffic proxying. When true, rig inserts
+	// a proxy on every egress edge and every external connection, capturing
+	// request/connection events in the event log.
+	Observe bool `json:"observe,omitempty"`
 }
 
 // ResolvedEnvironment is the runtime view of an environment after all

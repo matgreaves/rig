@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -350,6 +351,9 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 		}
 	}
 
+	// Track proxy endpoints separately; they override ingresses for env.Endpoint().
+	proxyEndpoints := make(map[string]map[string]spec.Endpoint) // service → ingress → proxy endpoint
+
 	for _, e := range events {
 		svc, ok := services[e.Service]
 		if !ok {
@@ -359,6 +363,13 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 		case EventIngressPublished:
 			if e.Endpoint != nil && e.Ingress != "" {
 				svc.Ingresses[e.Ingress] = *e.Endpoint
+			}
+		case EventProxyPublished:
+			if e.Endpoint != nil && e.Ingress != "" {
+				if proxyEndpoints[e.Service] == nil {
+					proxyEndpoints[e.Service] = make(map[string]spec.Endpoint)
+				}
+				proxyEndpoints[e.Service][e.Ingress] = *e.Endpoint
 			}
 		case EventServiceStarting:
 			svc.Status = spec.StatusStarting
@@ -390,6 +401,16 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 			}
 		}
 		services[name] = svc
+	}
+
+	// When observing, replace ingress endpoints with proxy endpoints so
+	// env.Endpoint() returns the proxy address.
+	for svcName, proxyMap := range proxyEndpoints {
+		svc := services[svcName]
+		for ingressName, proxyEP := range proxyMap {
+			svc.Ingresses[ingressName] = proxyEP
+		}
+		services[svcName] = svc
 	}
 
 	return spec.ResolvedEnvironment{
@@ -460,16 +481,63 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 		}
 	}
 
+	// Traffic summary accumulators.
+	type edgeKey struct{ source, target string }
+	type edgeStats struct {
+		requests    int
+		connections int
+		totalLatMs  float64
+		bytesIn     int64
+		bytesOut    int64
+	}
+	edges := make(map[edgeKey]*edgeStats)
+	getEdge := func(source, target string) *edgeStats {
+		k := edgeKey{source, target}
+		if s, ok := edges[k]; ok {
+			return s
+		}
+		s := &edgeStats{}
+		edges[k] = s
+		return s
+	}
+
 	// Write human-readable timeline summary alongside.
 	var b strings.Builder
 	start := events[0].Timestamp
 	fmt.Fprintf(&b, "rig: event timeline for environment %s:", inst.id)
 	for _, e := range events {
-		// Skip noisy per-line log events — the timeline is a structural overview.
-		if e.Type == EventServiceLog {
+		// Skip noisy per-line events — the timeline is a structural overview.
+		// Health check probes and service log lines are in the JSONL for detail.
+		if e.Type == EventServiceLog || e.Type == EventHealthCheckFailed {
 			continue
 		}
 		elapsed := e.Timestamp.Sub(start).Seconds()
+
+		// Render observed traffic events with source→target detail.
+		if e.Type == EventRequestCompleted && e.Request != nil {
+			r := e.Request
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %-10s → %-10s %-6s %-14s %3d  %.1fms",
+				elapsed, e.Type, r.Source, r.Target, r.Method, r.Path, r.StatusCode, r.LatencyMs)
+			s := getEdge(r.Source, r.Target)
+			s.requests++
+			s.totalLatMs += r.LatencyMs
+			continue
+		}
+		if e.Type == EventConnectionClosed && e.Connection != nil {
+			c := e.Connection
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %-10s → %-10s %.1fms  %dB↑ %dB↓",
+				elapsed, e.Type, c.Source, c.Target, c.DurationMs, c.BytesIn, c.BytesOut)
+			s := getEdge(c.Source, c.Target)
+			s.connections++
+			s.bytesIn += c.BytesIn
+			s.bytesOut += c.BytesOut
+			continue
+		}
+		if e.Type == EventConnectionOpened || e.Type == EventProxyPublished {
+			// Skip noisy per-open events.
+			continue
+		}
+
 		subject := e.Service
 		if subject == "" {
 			subject = e.Artifact
@@ -484,6 +552,7 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 		} else {
 			fmt.Fprintf(&b, "\n  %5.2fs  %s", elapsed, e.Type)
 		}
+
 		// After a service.failed event, include the tail of that service's output.
 		if e.Type == EventServiceFailed {
 			if logs, ok := serviceLogs[e.Service]; ok && len(logs) > 0 {
@@ -493,10 +562,54 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 			}
 		}
 	}
+	// Append traffic summary if any traffic was observed.
+	if len(edges) > 0 {
+		// Sort edges for deterministic output.
+		type edgeEntry struct {
+			key   edgeKey
+			stats *edgeStats
+		}
+		sorted := make([]edgeEntry, 0, len(edges))
+		for k, s := range edges {
+			sorted = append(sorted, edgeEntry{k, s})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			if sorted[i].key.source != sorted[j].key.source {
+				return sorted[i].key.source < sorted[j].key.source
+			}
+			return sorted[i].key.target < sorted[j].key.target
+		})
+
+		fmt.Fprintf(&b, "\n\n  Traffic:")
+		for _, e := range sorted {
+			if e.stats.requests > 0 {
+				avg := e.stats.totalLatMs / float64(e.stats.requests)
+				fmt.Fprintf(&b, "\n    %-10s → %-10s %d requests   avg %.1fms",
+					e.key.source, e.key.target, e.stats.requests, avg)
+			}
+			if e.stats.connections > 0 {
+				totalBytes := e.stats.bytesIn + e.stats.bytesOut
+				fmt.Fprintf(&b, "\n    %-10s → %-10s %d connections  %s total",
+					e.key.source, e.key.target, e.stats.connections, formatBytes(totalBytes))
+			}
+		}
+	}
+
 	// Best-effort — the JSONL file is the primary artifact.
 	os.WriteFile(base+".log", []byte(b.String()+"\n"), 0o644)
 
 	return jsonlPath, nil
+}
+
+func formatBytes(b int64) string {
+	switch {
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1fMB", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1fKB", float64(b)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%dB", b)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

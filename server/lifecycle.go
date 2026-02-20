@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/matgreaves/rig/server/artifact"
+	"github.com/matgreaves/rig/server/proxy"
 	"github.com/matgreaves/rig/server/ready"
 	"github.com/matgreaves/rig/server/service"
 	"github.com/matgreaves/rig/spec"
@@ -27,6 +28,8 @@ type serviceContext struct {
 	log        *EventLog
 	envName    string
 	instanceID string
+	observe    bool                // when true, create proxy forwarders
+	forwarders []*proxy.Forwarder // populated during publish/wiring when observing
 }
 
 // serviceLifecycle builds the full lifecycle sequence for a single service.
@@ -48,7 +51,7 @@ type serviceContext struct {
 func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 	inner := run.Sequence{
 		publishStep(sc, ports),
-		waitForEgressesStep(sc),
+		waitForEgressesStep(sc, ports),
 		prestartStep(sc),
 		runWithLifecycle(sc),
 	}
@@ -128,12 +131,44 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			})
 		}
 
+		// When observing, create one external proxy per ingress so that
+		// env.Endpoint() returns a proxy address instead of the real one.
+		if sc.observe {
+			proxyPorts, err := ports.Allocate(sc.instanceID, len(endpoints))
+			if err != nil {
+				return fmt.Errorf("service %q: allocate external proxy ports: %w", sc.name, err)
+			}
+			i := 0
+			for ingressName, ep := range endpoints {
+				fwd := &proxy.Forwarder{
+					ListenPort: proxyPorts[i],
+					Target:     ep,
+					Source:     "external",
+					TargetSvc:  sc.name,
+					Ingress:    ingressName,
+					Protocol:   string(ep.Protocol),
+					Emit:       proxyEmitter(sc),
+				}
+				sc.forwarders = append(sc.forwarders, fwd)
+
+				proxyEP := fwd.Endpoint()
+				sc.log.Publish(Event{
+					Type:        EventProxyPublished,
+					Environment: sc.envName,
+					Service:     sc.name,
+					Ingress:     ingressName,
+					Endpoint:    &proxyEP,
+				})
+				i++
+			}
+		}
+
 		return nil
 	})
 }
 
 // waitForEgressesStep blocks until every egress target is READY.
-func waitForEgressesStep(sc *serviceContext) run.Runner {
+func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 	return run.Func(func(ctx context.Context) error {
 		if len(sc.spec.Egresses) == 0 {
 			return nil
@@ -168,7 +203,29 @@ func waitForEgressesStep(sc *serviceContext) run.Runner {
 					sc.name, egressName, err)
 			}
 
-			sc.egresses[egressName] = *ev.Endpoint
+			realEndpoint := *ev.Endpoint
+
+			if sc.observe {
+				// Create an egress proxy so the service talks through the proxy.
+				proxyPorts, err := ports.Allocate(sc.instanceID, 1)
+				if err != nil {
+					return fmt.Errorf("service %q: allocate egress proxy port for %q: %w",
+						sc.name, egressName, err)
+				}
+				fwd := &proxy.Forwarder{
+					ListenPort: proxyPorts[0],
+					Target:     realEndpoint,
+					Source:     sc.name,
+					TargetSvc:  targetService,
+					Ingress:    targetIngress,
+					Protocol:   string(realEndpoint.Protocol),
+					Emit:       proxyEmitter(sc),
+				}
+				sc.forwarders = append(sc.forwarders, fwd)
+				sc.egresses[egressName] = fwd.Endpoint()
+			} else {
+				sc.egresses[egressName] = realEndpoint
+			}
 		}
 
 		sc.log.Publish(Event{
@@ -246,10 +303,17 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 		}
 
 		// Run the service and lifecycle in parallel.
-		return run.Group{
+		group := run.Group{
 			"runner":    runner,
 			"lifecycle": lifecycle,
-		}.Run(ctx)
+		}
+
+		// Start proxy forwarders alongside the service.
+		for i, fwd := range sc.forwarders {
+			group[fmt.Sprintf("proxy-%d", i)] = fwd.Runner()
+		}
+
+		return group.Run(ctx)
 	})
 }
 
@@ -262,7 +326,17 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 				readySpec = ingSpec.Ready
 			}
 			checker := ready.ForEndpoint(ep, readySpec)
-			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec); err != nil {
+			ingress := ingressName // capture for closure
+			onFailure := func(err error) {
+				sc.log.Publish(Event{
+					Type:        EventHealthCheckFailed,
+					Environment: sc.envName,
+					Service:     sc.name,
+					Ingress:     ingress,
+					Error:       err.Error(),
+				})
+			}
+			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec, onFailure); err != nil {
 				return fmt.Errorf("service %q, ingress %q: %w", sc.name, ingressName, err)
 			}
 		}
@@ -376,6 +450,47 @@ type eventLogWriter struct {
 	log     *EventLog
 	envName string
 	service string
+}
+
+// proxyEmitter returns a function that converts proxy events into server events
+// and publishes them to the event log.
+func proxyEmitter(sc *serviceContext) func(proxy.Event) {
+	return func(pe proxy.Event) {
+		ev := Event{
+			Type:        EventType(pe.Type),
+			Environment: sc.envName,
+		}
+		if pe.Request != nil {
+			ev.Request = &RequestInfo{
+				Source:                pe.Request.Source,
+				Target:                pe.Request.Target,
+				Ingress:               pe.Request.Ingress,
+				Method:                pe.Request.Method,
+				Path:                  pe.Request.Path,
+				StatusCode:            pe.Request.StatusCode,
+				LatencyMs:             pe.Request.LatencyMs,
+				RequestSize:           pe.Request.RequestSize,
+				ResponseSize:          pe.Request.ResponseSize,
+				RequestHeaders:        pe.Request.RequestHeaders,
+				RequestBody:           pe.Request.RequestBody,
+				RequestBodyTruncated:  pe.Request.RequestBodyTruncated,
+				ResponseHeaders:       pe.Request.ResponseHeaders,
+				ResponseBody:          pe.Request.ResponseBody,
+				ResponseBodyTruncated: pe.Request.ResponseBodyTruncated,
+			}
+		}
+		if pe.Connection != nil {
+			ev.Connection = &ConnectionInfo{
+				Source:     pe.Connection.Source,
+				Target:     pe.Connection.Target,
+				Ingress:    pe.Connection.Ingress,
+				BytesIn:    pe.Connection.BytesIn,
+				BytesOut:   pe.Connection.BytesOut,
+				DurationMs: pe.Connection.DurationMs,
+			}
+		}
+		sc.log.Publish(ev)
+	}
 }
 
 // createTempDirs creates temp directories for an environment instance.

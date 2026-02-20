@@ -42,6 +42,15 @@ const (
 
 	// Client-side test events.
 	EventTestNote EventType = "test.note"
+
+	// Health checks.
+	EventHealthCheckFailed EventType = "health.check_failed"
+
+	// Traffic observation.
+	EventRequestCompleted  EventType = "request.completed"
+	EventConnectionOpened  EventType = "connection.opened"
+	EventConnectionClosed  EventType = "connection.closed"
+	EventProxyPublished    EventType = "proxy.published"
 )
 
 // LogEntry holds a line of service output.
@@ -79,6 +88,36 @@ type CallbackResponse struct {
 	Data      map[string]any `json:"data,omitempty"`
 }
 
+// RequestInfo captures an observed HTTP request/response pair.
+type RequestInfo struct {
+	Source       string  `json:"source"`
+	Target       string  `json:"target"`
+	Ingress      string  `json:"ingress"`
+	Method       string  `json:"method"`
+	Path         string  `json:"path"`
+	StatusCode   int     `json:"status_code"`
+	LatencyMs    float64 `json:"latency_ms"`
+	RequestSize  int64   `json:"request_size"`
+	ResponseSize int64   `json:"response_size"`
+
+	RequestHeaders        map[string][]string `json:"request_headers,omitempty"`
+	RequestBody           []byte              `json:"request_body,omitempty"`
+	RequestBodyTruncated  bool                `json:"request_body_truncated,omitempty"`
+	ResponseHeaders       map[string][]string `json:"response_headers,omitempty"`
+	ResponseBody          []byte              `json:"response_body,omitempty"`
+	ResponseBodyTruncated bool                `json:"response_body_truncated,omitempty"`
+}
+
+// ConnectionInfo captures an observed TCP connection.
+type ConnectionInfo struct {
+	Source     string  `json:"source"`
+	Target     string  `json:"target"`
+	Ingress    string  `json:"ingress"`
+	BytesIn    int64   `json:"bytes_in"`
+	BytesOut   int64   `json:"bytes_out"`
+	DurationMs float64 `json:"duration_ms"`
+}
+
 // Event is a single entry in the event log.
 type Event struct {
 	Seq         uint64            `json:"seq"`
@@ -92,6 +131,8 @@ type Event struct {
 	Callback    *CallbackRequest  `json:"callback,omitempty"`
 	Result      *CallbackResponse `json:"result,omitempty"`
 	Error       string            `json:"error,omitempty"`
+	Request     *RequestInfo      `json:"request,omitempty"`
+	Connection  *ConnectionInfo   `json:"connection,omitempty"`
 	// Ingresses is populated on environment.up. It maps service name to a
 	// map of ingress name to endpoint, giving clients everything they need
 	// to connect to any service without a follow-up GET request.

@@ -454,6 +454,170 @@ func TestEndpoint_Attr(t *testing.T) {
 	}
 }
 
+// TestObserve verifies that WithObserve() inserts transparent traffic proxies
+// and captures request events in the event log.
+func TestObserve(t *testing.T) {
+	t.Parallel()
+	serverURL := startTestServer(t)
+
+	// Two services: api (Func) depends on backend (Func).
+	// Both are HTTP so we get request.completed events.
+	env := rig.Up(t, rig.Services{
+		"backend": rig.Func(echo.Run),
+		"api":     rig.Func(echo.Run).EgressAs("backend", "backend"),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second), rig.WithObserve())
+
+	// Make requests through the external proxy (env.Endpoint returns proxy).
+	client := httpx.New(env.Endpoint("api"))
+	for range 3 {
+		resp, err := client.Get("/hello")
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: %d, want 200", resp.StatusCode)
+		}
+	}
+
+	// Also hit the backend directly through its external proxy.
+	backendClient := httpx.New(env.Endpoint("backend"))
+	resp, err := backendClient.Get("/direct")
+	if err != nil {
+		t.Fatalf("backend request: %v", err)
+	}
+	resp.Body.Close()
+
+	// Fetch the event log and verify request.completed events.
+	logResp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer logResp.Body.Close()
+
+	var events []struct {
+		Type    string `json:"type"`
+		Request *struct {
+			Source     string `json:"source"`
+			Target    string `json:"target"`
+			Method    string `json:"method"`
+			Path      string `json:"path"`
+			StatusCode int   `json:"status_code"`
+		} `json:"request,omitempty"`
+		Endpoint *struct {
+			Port int `json:"port"`
+		} `json:"endpoint,omitempty"`
+	}
+	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	// Count request.completed events by source.
+	externalToAPI := 0
+	externalToBackend := 0
+	for _, e := range events {
+		if e.Type != "request.completed" || e.Request == nil {
+			continue
+		}
+		if e.Request.Source == "external" && e.Request.Target == "api" {
+			externalToAPI++
+		}
+		if e.Request.Source == "external" && e.Request.Target == "backend" {
+			externalToBackend++
+		}
+	}
+
+	// We made 3 requests to api + health check requests from ready polling.
+	// At minimum we should see our 3 explicit requests.
+	if externalToAPI < 3 {
+		t.Errorf("external→api requests: got %d, want >= 3", externalToAPI)
+	}
+	if externalToBackend < 1 {
+		t.Errorf("external→backend requests: got %d, want >= 1", externalToBackend)
+	}
+
+	// Verify proxy.published events were emitted.
+	proxyPublished := 0
+	for _, e := range events {
+		if e.Type == "proxy.published" {
+			proxyPublished++
+		}
+	}
+	if proxyPublished < 2 {
+		t.Errorf("proxy.published events: got %d, want >= 2 (one per service ingress)", proxyPublished)
+	}
+}
+
+// TestObserveTCP verifies TCP proxy captures connection events.
+func TestObserveTCP(t *testing.T) {
+	t.Parallel()
+	root := moduleRoot(t)
+	serverURL := startTestServer(t)
+
+	env := rig.Up(t, rig.Services{
+		"tcpecho": rig.Go(filepath.Join(root, "testdata", "services", "tcpecho")).
+			Ingress("default", rig.IngressTCP()),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second), rig.WithObserve())
+
+	// Connect through the proxy.
+	ep := env.Endpoint("tcpecho")
+	conn, err := net.DialTimeout("tcp", ep.Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	_, err = conn.Write([]byte("hello\n"))
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, 128)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	t.Logf("tcpecho response: %s", buf[:n])
+	conn.Close()
+
+	// Give the proxy a moment to emit the connection.closed event.
+	time.Sleep(100 * time.Millisecond)
+
+	// Fetch event log and verify connection events.
+	logResp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer logResp.Body.Close()
+
+	var events []struct {
+		Type       string `json:"type"`
+		Connection *struct {
+			Source   string `json:"source"`
+			Target  string `json:"target"`
+			BytesIn int64  `json:"bytes_in"`
+		} `json:"connection,omitempty"`
+	}
+	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	var opened, closed int
+	for _, e := range events {
+		switch e.Type {
+		case "connection.opened":
+			opened++
+		case "connection.closed":
+			if e.Connection != nil && e.Connection.BytesIn > 0 {
+				closed++
+			}
+		}
+	}
+	if opened < 1 {
+		t.Errorf("connection.opened events: got %d, want >= 1", opened)
+	}
+	if closed < 1 {
+		t.Errorf("connection.closed events (with bytes): got %d, want >= 1", closed)
+	}
+}
+
 // --- helpers ---
 
 func assertPanics(t *testing.T, name string, fn func()) {

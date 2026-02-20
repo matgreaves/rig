@@ -16,14 +16,37 @@ import (
 // wireEvent mirrors the server's Event type for JSON decoding from the SSE
 // stream. Only the fields the SDK needs are included.
 type wireEvent struct {
-	Type      string                                `json:"type"`
-	Service   string                                `json:"service,omitempty"`
-	Ingress   string                                `json:"ingress,omitempty"`
-	Artifact  string                                `json:"artifact,omitempty"`
-	Error     string                                `json:"error,omitempty"`
-	Log       *wireLogEntry                         `json:"log,omitempty"`
-	Callback  *wireCallbackRequest                  `json:"callback,omitempty"`
-	Ingresses map[string]map[string]wireEndpoint    `json:"ingresses,omitempty"`
+	Type       string                                `json:"type"`
+	Service    string                                `json:"service,omitempty"`
+	Ingress    string                                `json:"ingress,omitempty"`
+	Artifact   string                                `json:"artifact,omitempty"`
+	Error      string                                `json:"error,omitempty"`
+	Log        *wireLogEntry                         `json:"log,omitempty"`
+	Callback   *wireCallbackRequest                  `json:"callback,omitempty"`
+	Request    *wireRequestInfo                      `json:"request,omitempty"`
+	Connection *wireConnectionInfo                   `json:"connection,omitempty"`
+	Ingresses  map[string]map[string]wireEndpoint    `json:"ingresses,omitempty"`
+}
+
+type wireRequestInfo struct {
+	Source       string  `json:"source"`
+	Target       string  `json:"target"`
+	Ingress      string  `json:"ingress"`
+	Method       string  `json:"method"`
+	Path         string  `json:"path"`
+	StatusCode   int     `json:"status_code"`
+	LatencyMs    float64 `json:"latency_ms"`
+	RequestSize  int64   `json:"request_size"`
+	ResponseSize int64   `json:"response_size"`
+}
+
+type wireConnectionInfo struct {
+	Source     string  `json:"source"`
+	Target     string  `json:"target"`
+	Ingress    string  `json:"ingress"`
+	BytesIn    int64   `json:"bytes_in"`
+	BytesOut   int64   `json:"bytes_out"`
+	DurationMs float64 `json:"duration_ms"`
 }
 
 type wireLogEntry struct {
@@ -160,22 +183,8 @@ func handleEvent(
 	case "environment.down":
 		return nil, false, fmt.Errorf("environment failed (received environment.down without environment.up)")
 
-	case "service.log":
-		if ev.Log != nil {
-			t.Logf("rig: %s | %s", ev.Service, strings.TrimRight(ev.Log.Data, "\n"))
-		}
-
 	case "service.failed":
 		t.Logf("rig: service %q failed: %s", ev.Service, ev.Error)
-
-	case "artifact.started":
-		t.Logf("rig: resolving artifact %q", ev.Artifact)
-
-	case "artifact.cached":
-		t.Logf("rig: artifact %q (cached)", ev.Artifact)
-
-	case "artifact.completed":
-		t.Logf("rig: artifact %q resolved", ev.Artifact)
 
 	case "artifact.failed":
 		t.Logf("rig: artifact %q failed: %s", ev.Artifact, ev.Error)
