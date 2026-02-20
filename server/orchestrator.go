@@ -122,6 +122,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 				envName:    env.Name,
 				instanceID: instanceID,
 				artifacts:  results,
+				observe:    env.Observe,
 			}
 
 			group[name] = serviceLifecycle(sc, o.Ports)

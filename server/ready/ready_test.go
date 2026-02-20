@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,7 +109,7 @@ func TestPoll_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil)
+	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil, nil)
 	if err != nil {
 		t.Errorf("expected success, got: %v", err)
 	}
@@ -127,9 +128,36 @@ func TestPoll_Timeout(t *testing.T) {
 	rs := &spec.ReadySpec{Timeout: shortTimeout}
 
 	ctx := context.Background()
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, rs)
+	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, rs, nil)
 	if err == nil {
 		t.Error("expected timeout error")
+	}
+	// Error should include the last check error, not just "context deadline exceeded".
+	if !strings.Contains(err.Error(), "last error:") {
+		t.Errorf("timeout error should include last check error, got: %v", err)
+	}
+}
+
+func TestPoll_OnFailureCallback(t *testing.T) {
+	// Port that's not listening.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	shortTimeout := spec.Duration{Duration: 100 * time.Millisecond}
+	rs := &spec.ReadySpec{Timeout: shortTimeout}
+
+	var failures []error
+	onFailure := func(err error) {
+		failures = append(failures, err)
+	}
+
+	ready.Poll(context.Background(), "127.0.0.1", port, &ready.TCP{}, rs, onFailure)
+	if len(failures) == 0 {
+		t.Error("expected onFailure to be called at least once")
 	}
 }
 
@@ -163,7 +191,7 @@ func TestPoll_DelayedReady(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil)
+	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil, nil)
 	if err != nil {
 		t.Errorf("expected eventual success, got: %v", err)
 	}

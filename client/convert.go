@@ -16,7 +16,7 @@ var hookSeq atomic.Uint64
 // envToSpec converts the SDK Services to the spec.Environment wire format.
 // Hook functions are registered in handlers keyed by their generated name.
 // Start functions (from FuncDef) are registered in startHandlers.
-func envToSpec(testName string, services Services, handlers map[string]hookFunc, startHandlers map[string]startFunc) (spec.Environment, error) {
+func envToSpec(testName string, services Services, handlers map[string]hookFunc, startHandlers map[string]startFunc, observe bool) (spec.Environment, error) {
 	specs := make(map[string]spec.Service, len(services))
 	for name, def := range services {
 		svc, err := serviceToSpec(def, handlers, startHandlers)
@@ -28,6 +28,7 @@ func envToSpec(testName string, services Services, handlers map[string]hookFunc,
 	return spec.Environment{
 		Name:     testName,
 		Services: specs,
+		Observe:  observe,
 	}, nil
 }
 

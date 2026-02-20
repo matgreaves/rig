@@ -102,6 +102,7 @@ type Option func(*options)
 type options struct {
 	serverURL      string
 	startupTimeout time.Duration
+	observe        bool
 }
 
 func defaultOptions() options {
@@ -121,6 +122,13 @@ func WithServer(url string) Option {
 // ready. Default is 2 minutes.
 func WithTimeout(d time.Duration) Option {
 	return func(o *options) { o.startupTimeout = d }
+}
+
+// WithObserve enables transparent traffic proxying. When set, rig inserts
+// a proxy on every egress edge and every external connection, capturing
+// request/connection events in the event log.
+func WithObserve() Option {
+	return func(o *options) { o.observe = true }
 }
 
 // Up creates an environment, blocks until all services are ready, and
@@ -147,7 +155,7 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	// Collect handlers during spec conversion.
 	handlers := make(map[string]hookFunc)
 	startHandlers := make(map[string]startFunc)
-	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers)
+	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers, o.observe)
 	if err != nil {
 		t.Fatalf("rig: build spec: %v", err)
 	}
