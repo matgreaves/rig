@@ -15,10 +15,11 @@ var hookSeq atomic.Uint64
 
 // envToSpec converts the SDK Services to the spec.Environment wire format.
 // Hook functions are registered in handlers keyed by their generated name.
-func envToSpec(testName string, services Services, handlers map[string]hookFunc) (spec.Environment, error) {
+// Start functions (from FuncDef) are registered in startHandlers.
+func envToSpec(testName string, services Services, handlers map[string]hookFunc, startHandlers map[string]startFunc) (spec.Environment, error) {
 	specs := make(map[string]spec.Service, len(services))
 	for name, def := range services {
-		svc, err := serviceToSpec(def, handlers)
+		svc, err := serviceToSpec(def, handlers, startHandlers)
 		if err != nil {
 			return spec.Environment{}, fmt.Errorf("service %q: %w", name, err)
 		}
@@ -30,12 +31,14 @@ func envToSpec(testName string, services Services, handlers map[string]hookFunc)
 	}, nil
 }
 
-func serviceToSpec(def ServiceDef, handlers map[string]hookFunc) (spec.Service, error) {
+func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers map[string]startFunc) (spec.Service, error) {
 	switch d := def.(type) {
 	case *GoDef:
 		return goToSpec(d, handlers)
 	case *ProcessDef:
 		return processToSpec(d, handlers)
+	case *FuncDef:
+		return funcToSpec(d, handlers, startHandlers)
 	case *CustomDef:
 		return customToSpec(d, handlers)
 	default:
@@ -82,6 +85,26 @@ func processToSpec(d *ProcessDef, handlers map[string]hookFunc) (spec.Service, e
 		Type:      "process",
 		Config:    cfg,
 		Args:      d.args,
+		Ingresses: ingressesToSpec(d.ingresses),
+		Egresses:  egressesToSpec(d.egresses),
+		Hooks:     hooks,
+	}, nil
+}
+
+func funcToSpec(d *FuncDef, handlers map[string]hookFunc, startHandlers map[string]startFunc) (spec.Service, error) {
+	name := fmt.Sprintf("_start_%d", hookSeq.Add(1))
+	startHandlers[name] = startFunc(d.fn)
+
+	cfg, _ := json.Marshal(map[string]string{"start_handler": name})
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return spec.Service{}, err
+	}
+
+	return spec.Service{
+		Type:      "client",
+		Config:    cfg,
 		Ingresses: ingressesToSpec(d.ingresses),
 		Egresses:  egressesToSpec(d.egresses),
 		Hooks:     hooks,

@@ -15,6 +15,7 @@ var KnownServiceTypes = map[string]bool{
 	"process":   true,
 	"script":    true,
 	"go":        true,
+	"client":    true,
 	"postgres":  true,
 	"temporal":  true,
 	"redis":     true,

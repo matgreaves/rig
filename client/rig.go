@@ -33,8 +33,8 @@ const (
 type Services map[string]ServiceDef
 
 // ServiceDef is the interface implemented by all service type builders
-// (*GoDef, *ProcessDef, *CustomDef). It is sealed — only types in this
-// package implement it.
+// (*GoDef, *FuncDef, *ProcessDef, *CustomDef). It is sealed — only types
+// in this package implement it.
 type ServiceDef interface {
 	rigService()
 }
@@ -93,6 +93,9 @@ type hookFunc func(ctx context.Context, w Wiring) error
 
 func (hookFunc) rigHook() {}
 
+// startFunc is a function that runs as a service in the test process.
+type startFunc func(ctx context.Context) error
+
 // Option configures the behavior of Up.
 type Option func(*options)
 
@@ -141,9 +144,10 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	// Trim trailing slash for consistent URL construction.
 	o.serverURL = strings.TrimRight(o.serverURL, "/")
 
-	// Collect hook handlers during spec conversion.
+	// Collect handlers during spec conversion.
 	handlers := make(map[string]hookFunc)
-	specEnv, err := envToSpec(t.Name(), services, handlers)
+	startHandlers := make(map[string]startFunc)
+	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers)
 	if err != nil {
 		t.Fatalf("rig: build spec: %v", err)
 	}
@@ -187,8 +191,13 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 
 	envID := created.ID
 
-	// Register cleanup: DELETE the environment on test completion.
+	// Create a context for client-side functions. Cancelled during cleanup
+	// before the environment is destroyed, giving functions time to stop.
+	funcCtx, funcCancel := context.WithCancel(context.Background())
+
+	// Register cleanup: stop functions first, then DELETE the environment.
 	t.Cleanup(func() {
+		funcCancel()
 		destroyEnvironment(o.serverURL, envID)
 	})
 
@@ -196,7 +205,7 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	ctx, cancel := context.WithTimeout(context.Background(), o.startupTimeout)
 	defer cancel()
 
-	resolved, err := streamUntilReady(ctx, t, o.serverURL, envID, handlers)
+	resolved, err := streamUntilReady(ctx, t, o.serverURL, envID, handlers, funcCtx, startHandlers)
 	if err != nil {
 		t.Fatalf("rig: %v", err)
 	}

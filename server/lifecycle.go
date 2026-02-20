@@ -205,6 +205,9 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			EnvDir:      sc.envDir,
 			Stdout:      &teeWriter{logWriter, "stdout"},
 			Stderr:      &teeWriter{logWriter, "stderr"},
+			Callback: func(ctx context.Context, name, callbackType string) error {
+				return dispatchCallback(ctx, sc, name, callbackType, true)
+			},
 		})
 
 		// Build the lifecycle continuation that runs alongside the service.
@@ -271,13 +274,10 @@ func emitEvent(sc *serviceContext, eventType EventType) run.Runner {
 	})
 }
 
-// executeHook dispatches a hook to the appropriate executor.
-// For Phase 3, only client_func hooks are supported (via callback events).
-func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, includeEgresses bool) error {
-	if hook.Type != "client_func" || hook.ClientFunc == nil {
-		return fmt.Errorf("unsupported hook type %q (only client_func supported in this phase)", hook.Type)
-	}
-
+// dispatchCallback sends a callback request to the client SDK via the event
+// log and blocks until the response arrives. This is used both for hooks and
+// for client service type start callbacks.
+func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackType string, includeEgresses bool) error {
 	wiring := &WiringContext{
 		Ingresses: sc.ingresses,
 		TempDir:   sc.tempDir,
@@ -287,7 +287,7 @@ func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, i
 		wiring.Egresses = sc.egresses
 	}
 
-	requestID := fmt.Sprintf("%s-%s-%s", sc.instanceID, sc.name, hook.ClientFunc.Name)
+	requestID := fmt.Sprintf("%s-%s-%s", sc.instanceID, sc.name, name)
 
 	sc.log.Publish(Event{
 		Type:        EventCallbackRequest,
@@ -295,8 +295,8 @@ func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, i
 		Service:     sc.name,
 		Callback: &CallbackRequest{
 			RequestID: requestID,
-			Name:      hook.ClientFunc.Name,
-			Type:      "hook",
+			Name:      name,
+			Type:      callbackType,
 			Wiring:    wiring,
 		},
 	})
@@ -307,14 +307,23 @@ func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, i
 			e.Result.RequestID == requestID
 	})
 	if err != nil {
-		return fmt.Errorf("hook %q: waiting for callback response: %w", hook.ClientFunc.Name, err)
+		return fmt.Errorf("callback %q: waiting for response: %w", name, err)
 	}
 
 	if ev.Result.Error != "" {
-		return fmt.Errorf("hook %q: callback error: %s", hook.ClientFunc.Name, ev.Result.Error)
+		return fmt.Errorf("callback %q: error: %s", name, ev.Result.Error)
 	}
 
 	return nil
+}
+
+// executeHook dispatches a hook to the appropriate executor.
+// Only client_func hooks are supported (via callback events).
+func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, includeEgresses bool) error {
+	if hook.Type != "client_func" || hook.ClientFunc == nil {
+		return fmt.Errorf("unsupported hook type %q (only client_func supported)", hook.Type)
+	}
+	return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
 }
 
 // teeWriter writes service output to the event log.

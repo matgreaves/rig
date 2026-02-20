@@ -15,6 +15,7 @@ import (
 	"github.com/matgreaves/rig/connect/httpx"
 	"github.com/matgreaves/rig/server"
 	"github.com/matgreaves/rig/server/service"
+	"github.com/matgreaves/rig/testdata/services/echo"
 )
 
 // moduleRoot returns the module root by finding go.mod relative to the test
@@ -45,6 +46,7 @@ func startTestServer(t *testing.T) string {
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
+	reg.Register("client", service.Client{})
 
 	s := server.NewServer(
 		server.NewPortAllocator(),
@@ -63,7 +65,7 @@ func TestUp_GoService(t *testing.T) {
 	serverURL := startTestServer(t)
 
 	env := rig.Up(t, rig.Services{
-		"echo": rig.Go(filepath.Join(root, "testdata", "services", "echo")),
+		"echo": rig.Go(filepath.Join(root, "testdata", "services", "echo", "cmd")),
 	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
 	client := httpx.New(env.Endpoint("echo"))
@@ -82,7 +84,7 @@ func TestUp_ProcessService(t *testing.T) {
 	serverURL := startTestServer(t)
 
 	// Build the echo binary first since "process" type needs a pre-built binary.
-	echoBin := buildBinary(t, filepath.Join(root, "testdata", "services", "echo"))
+	echoBin := buildBinary(t, filepath.Join(root, "testdata", "services", "echo", "cmd"))
 
 	env := rig.Up(t, rig.Services{
 		"echo": rig.Process(echoBin),
@@ -106,7 +108,7 @@ func TestUp_WithDependency(t *testing.T) {
 	env := rig.Up(t, rig.Services{
 		"db": rig.Go(filepath.Join(root, "testdata", "services", "tcpecho")).
 			Ingress("default", rig.IngressTCP()),
-		"api": rig.Go(filepath.Join(root, "testdata", "services", "echo")).
+		"api": rig.Go(filepath.Join(root, "testdata", "services", "echo", "cmd")).
 			EgressAs("database", "db"),
 	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
@@ -137,7 +139,7 @@ func TestUp_InitHook(t *testing.T) {
 	var wiringSnapshot rig.Wiring
 
 	env := rig.Up(t, rig.Services{
-		"echo": rig.Go(filepath.Join(root, "testdata", "services", "echo")).
+		"echo": rig.Go(filepath.Join(root, "testdata", "services", "echo", "cmd")).
 			InitHook(func(ctx context.Context, w rig.Wiring) error {
 				hookCalled = true
 				wiringSnapshot = w
@@ -180,7 +182,7 @@ func TestUp_PrestartHook(t *testing.T) {
 	rig.Up(t, rig.Services{
 		"db": rig.Go(filepath.Join(root, "testdata", "services", "tcpecho")).
 			Ingress("default", rig.IngressTCP()),
-		"api": rig.Go(filepath.Join(root, "testdata", "services", "echo")).
+		"api": rig.Go(filepath.Join(root, "testdata", "services", "echo", "cmd")).
 			EgressAs("database", "db").
 			PrestartHook(func(ctx context.Context, w rig.Wiring) error {
 				wiringSnapshot = w
@@ -196,6 +198,82 @@ func TestUp_PrestartHook(t *testing.T) {
 	// Prestart hooks also receive ingresses.
 	if len(wiringSnapshot.Ingresses) == 0 {
 		t.Error("prestart hook received no ingresses")
+	}
+}
+
+func TestUp_FuncService(t *testing.T) {
+	serverURL := startTestServer(t)
+
+	env := rig.Up(t, rig.Services{
+		"echo": rig.Func(echo.Run),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+	client := httpx.New(env.Endpoint("echo"))
+	resp, err := client.Get("/health")
+	if err != nil {
+		t.Fatalf("health check: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("health: %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestUp_FuncServiceWithEgress(t *testing.T) {
+	root := moduleRoot(t)
+	serverURL := startTestServer(t)
+
+	env := rig.Up(t, rig.Services{
+		"db": rig.Go(filepath.Join(root, "testdata", "services", "tcpecho")).
+			Ingress("default", rig.IngressTCP()),
+		"api": rig.Func(echo.Run).
+			EgressAs("database", "db"),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+	// API should be reachable.
+	client := httpx.New(env.Endpoint("api"))
+	resp, err := client.Get("/health")
+	if err != nil {
+		t.Fatalf("api health check: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("api health: %d, want 200", resp.StatusCode)
+	}
+
+	// DB should be reachable via TCP.
+	conn, err := net.DialTimeout("tcp", env.Endpoint("db").Addr(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("db dial: %v", err)
+	}
+	conn.Close()
+}
+
+func TestUp_FuncServiceWithInitHook(t *testing.T) {
+	serverURL := startTestServer(t)
+
+	var hookCalled bool
+
+	env := rig.Up(t, rig.Services{
+		"echo": rig.Func(echo.Run).
+			InitHook(func(ctx context.Context, w rig.Wiring) error {
+				hookCalled = true
+				return nil
+			}),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+	if !hookCalled {
+		t.Fatal("init hook was not called")
+	}
+
+	client := httpx.New(env.Endpoint("echo"))
+	resp, err := client.Get("/health")
+	if err != nil {
+		t.Fatalf("health check: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("health: %d, want 200", resp.StatusCode)
 	}
 }
 

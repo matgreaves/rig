@@ -59,7 +59,7 @@ func NewServer(
 
 	s.mux.HandleFunc("POST /environments", s.handleCreateEnvironment)
 	s.mux.HandleFunc("GET /environments/{id}/events", s.handleSSE)
-	s.mux.HandleFunc("POST /environments/{id}/callbacks/{req_id}", s.handleCallback)
+	s.mux.HandleFunc("POST /environments/{id}/events", s.handleClientEvent)
 	s.mux.HandleFunc("DELETE /environments/{id}", s.handleDeleteEnvironment)
 	s.mux.HandleFunc("GET /environments/{id}", s.handleGetEnvironment)
 
@@ -188,30 +188,62 @@ func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, buildResolvedEnvironment(inst))
 }
 
-// handleCallback handles POST /environments/{id}/callbacks/{req_id}.
+// clientEvent is the wire format for events posted by the client SDK.
+// The Type field determines how the event is handled.
+type clientEvent struct {
+	Type string `json:"type"`
+
+	// callback.response fields
+	RequestID string         `json:"request_id,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Data      map[string]any `json:"data,omitempty"`
+
+	// service.error fields
+	Service string `json:"service,omitempty"`
+}
+
+// handleClientEvent handles POST /environments/{id}/events.
 //
-// The client posts the result of a callback request. The server publishes it
-// to the event log, unblocking the lifecycle step that is waiting for it.
-func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
+// A single endpoint for all client→server communication. The payload's type
+// field determines how the event is processed:
+//   - "callback.response": unblocks a waiting lifecycle step
+//   - "service.error": marks a client-side service as failed
+func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.getInstance(w, r)
 	if !ok {
 		return
 	}
 
-	reqID := r.PathValue("req_id")
-
-	var result CallbackResponse
-	if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
+	var ev clientEvent
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
 		writeError(w, http.StatusBadRequest, "decode body: "+err.Error())
 		return
 	}
-	result.RequestID = reqID // canonical source is the URL, not the body
 
-	inst.log.Publish(Event{
-		Type:        EventCallbackResponse,
-		Environment: inst.spec.Name,
-		Result:      &result,
-	})
+	switch ev.Type {
+	case "callback.response":
+		inst.log.Publish(Event{
+			Type:        EventCallbackResponse,
+			Environment: inst.spec.Name,
+			Result: &CallbackResponse{
+				RequestID: ev.RequestID,
+				Error:     ev.Error,
+				Data:      ev.Data,
+			},
+		})
+
+	case "service.error":
+		inst.log.Publish(Event{
+			Type:        EventServiceFailed,
+			Environment: inst.spec.Name,
+			Service:     ev.Service,
+			Error:       ev.Error,
+		})
+
+	default:
+		writeError(w, http.StatusBadRequest, "unknown client event type: "+ev.Type)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

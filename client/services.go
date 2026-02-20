@@ -93,6 +93,79 @@ func (d *GoDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *GoDe
 	return d
 }
 
+// FuncDef defines a service backed by a Go function running in the test
+// process. The function receives a context with wiring injected — use
+// connect.ParseWiring(ctx) to access it, just like a standalone binary.
+type FuncDef struct {
+	fn        func(ctx context.Context) error
+	ingresses map[string]IngressDef
+	egresses  map[string]egressDef
+	hooks     hooksDef
+}
+
+func (*FuncDef) rigService() {}
+
+// Func creates a service that runs fn in the test process. fn should behave
+// like a service main: call connect.ParseWiring(ctx) to get its wiring, start
+// serving, and block until ctx is cancelled.
+//
+// By default a single HTTP ingress is exposed. The same function can be used
+// with rig.Go() if compiled into a binary — connect.ParseWiring reads from
+// context when available, falling back to environment variables.
+//
+//	rig.Func(echo.Run).Egress("db")
+func Func(fn func(ctx context.Context) error) *FuncDef {
+	return &FuncDef{
+		fn:        fn,
+		ingresses: map[string]IngressDef{"default": IngressHTTP()},
+	}
+}
+
+// NoIngress removes all ingresses.
+func (d *FuncDef) NoIngress() *FuncDef {
+	d.ingresses = nil
+	return d
+}
+
+// Ingress adds or overrides an ingress on the service.
+func (d *FuncDef) Ingress(name string, def IngressDef) *FuncDef {
+	if d.ingresses == nil {
+		d.ingresses = make(map[string]IngressDef)
+	}
+	d.ingresses[name] = def
+	return d
+}
+
+// Egress adds a dependency on a service, named after the target.
+func (d *FuncDef) Egress(service string, ingress ...string) *FuncDef {
+	return d.EgressAs(service, service, ingress...)
+}
+
+// EgressAs adds a dependency with a custom local name.
+func (d *FuncDef) EgressAs(name, service string, ingress ...string) *FuncDef {
+	if d.egresses == nil {
+		d.egresses = make(map[string]egressDef)
+	}
+	eg := egressDef{service: service}
+	if len(ingress) > 0 {
+		eg.ingress = ingress[0]
+	}
+	d.egresses[name] = eg
+	return d
+}
+
+// InitHook registers a client-side init hook function.
+func (d *FuncDef) InitHook(fn func(ctx context.Context, w Wiring) error) *FuncDef {
+	d.hooks.init = hookFunc(fn)
+	return d
+}
+
+// PrestartHook registers a client-side prestart hook function.
+func (d *FuncDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *FuncDef {
+	d.hooks.prestart = hookFunc(fn)
+	return d
+}
+
 // ProcessDef defines a service that runs a pre-built binary. Use the
 // Process() constructor or create a ProcessDef literal for full control.
 type ProcessDef struct {

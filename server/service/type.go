@@ -31,6 +31,10 @@ type StartParams struct {
 	EnvDir      string
 	Stdout      io.Writer
 	Stderr      io.Writer
+
+	// Callback dispatches a callback request to the client SDK and blocks
+	// until the response arrives. Nil for types that don't use callbacks.
+	Callback func(ctx context.Context, name, callbackType string) error
 }
 
 // ArtifactParams is passed to ArtifactProvider.Artifacts.

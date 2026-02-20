@@ -62,7 +62,7 @@ func newTestOrchestrator(t *testing.T) *server.Orchestrator {
 }
 
 func TestOrchestrate_SingleHTTPService(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 
 	orch := newTestOrchestrator(t)
 
@@ -144,7 +144,7 @@ func TestOrchestrate_SingleHTTPService(t *testing.T) {
 }
 
 func TestOrchestrate_DependencyOrdering(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 	tcpBin := buildTestBinary(t, "testdata/services/tcpecho")
 
 	orch := newTestOrchestrator(t)
@@ -226,7 +226,7 @@ func TestOrchestrate_DependencyOrdering(t *testing.T) {
 
 func TestOrchestrate_NoIngressService(t *testing.T) {
 	// A service with no ingresses should start and become ready without health checks.
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 
 	orch := newTestOrchestrator(t)
 
