@@ -160,7 +160,7 @@ func TestServer_ValidationErrors(t *testing.T) {
 }
 
 func TestServer_CreateAndStream(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 	ts := newTestServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -240,7 +240,7 @@ func TestServer_CreateAndStream(t *testing.T) {
 }
 
 func TestServer_GetEnvironment(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 	ts := newTestServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -365,7 +365,7 @@ func TestServer_FailurePropagation(t *testing.T) {
 }
 
 func TestServer_ConcurrentDelete(t *testing.T) {
-	echoBin := buildTestBinary(t, "testdata/services/echo")
+	echoBin := buildTestBinary(t, "testdata/services/echo/cmd")
 	ts := newTestServer(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -453,7 +453,7 @@ func TestServer_IdleTimer(t *testing.T) {
 
 func TestServer_GoServiceType(t *testing.T) {
 	root := moduleRoot(t)
-	echoModule := filepath.Join(root, "testdata", "services", "echo")
+	echoModule := filepath.Join(root, "testdata", "services", "echo", "cmd")
 
 	cacheDir := t.TempDir()
 

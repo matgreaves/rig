@@ -1,26 +1,20 @@
-// echo is a minimal HTTP server used for integration tests.
-package main
+// Package echo is a minimal HTTP echo server for integration tests.
+//
+// It can be used as a standalone binary via the cmd/ subdirectory,
+// or in-process via rig.Func(echo.Run).
+package echo
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
 
 	"github.com/matgreaves/rig/connect/httpx"
 )
 
-func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "echo: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func run(ctx context.Context) error {
+// Run starts the echo HTTP server. It reads wiring from ctx (via
+// connect.ParseWiring) and blocks until ctx is cancelled.
+func Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "echo: %s %s", r.Method, r.URL.Path)

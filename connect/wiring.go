@@ -45,12 +45,21 @@ func (w *Wiring) Egress(name string) Endpoint {
 	return ep
 }
 
-// ParseWiring reads the service wiring from the environment. It parses
-// RIG_WIRING if set, falling back to HOST/PORT for standalone use.
-//
-// The ctx parameter is reserved for future use (e.g. wiring passed
-// through context in function runners).
-func ParseWiring(_ context.Context) (*Wiring, error) {
+type wiringKey struct{}
+
+// WithWiring returns a new context carrying the given Wiring.
+// ParseWiring checks for this before falling back to environment variables.
+func WithWiring(ctx context.Context, w *Wiring) context.Context {
+	return context.WithValue(ctx, wiringKey{}, w)
+}
+
+// ParseWiring reads the service wiring. It checks the context first (set
+// via WithWiring for in-process services), then falls back to the RIG_WIRING
+// environment variable, then HOST/PORT.
+func ParseWiring(ctx context.Context) (*Wiring, error) {
+	if w, ok := ctx.Value(wiringKey{}).(*Wiring); ok && w != nil {
+		return w, nil
+	}
 	if raw := os.Getenv("RIG_WIRING"); raw != "" {
 		var w Wiring
 		if err := json.Unmarshal([]byte(raw), &w); err != nil {

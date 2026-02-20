@@ -34,7 +34,7 @@ func moduleRoot(t *testing.T) string {
 
 func TestGoBuild_CacheKey_Stable(t *testing.T) {
 	root := moduleRoot(t)
-	echoDir := filepath.Join(root, "testdata", "services", "echo")
+	echoDir := filepath.Join(root, "testdata", "services", "echo", "cmd")
 
 	g := artifact.GoBuild{Module: echoDir}
 
@@ -91,7 +91,7 @@ func TestGoBuild_CacheKey_Changes(t *testing.T) {
 
 func TestGoBuild_Resolve(t *testing.T) {
 	root := moduleRoot(t)
-	echoDir := filepath.Join(root, "testdata", "services", "echo")
+	echoDir := filepath.Join(root, "testdata", "services", "echo", "cmd")
 
 	g := artifact.GoBuild{Module: echoDir}
 	outputDir := t.TempDir()

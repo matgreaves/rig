@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/matgreaves/rig/connect"
 )
 
 // wireEvent mirrors the server's Event type for JSON decoding from the SSE
@@ -51,20 +53,18 @@ type wireEndpoint struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
-type wireCallbackResponse struct {
-	RequestID string         `json:"request_id"`
-	Error     string         `json:"error,omitempty"`
-	Data      map[string]any `json:"data,omitempty"`
-}
-
 // streamUntilReady connects to the SSE stream and processes events until
 // environment.up arrives (success) or environment.down arrives (failure).
+// funcCtx is the context for client-side functions (cancelled during cleanup).
+// startHandlers maps start callback names to functions launched asynchronously.
 func streamUntilReady(
 	ctx context.Context,
 	t testing.TB,
 	serverURL string,
 	envID string,
 	handlers map[string]hookFunc,
+	funcCtx context.Context,
+	startHandlers map[string]startFunc,
 ) (*Environment, error) {
 	url := fmt.Sprintf("%s/environments/%s/events", serverURL, envID)
 
@@ -108,7 +108,7 @@ func streamUntilReady(
 				continue
 			}
 
-			result, done, err := handleEvent(ctx, t, serverURL, envID, ev, handlers)
+			result, done, err := handleEvent(ctx, t, serverURL, envID, ev, handlers, funcCtx, startHandlers)
 			if err != nil {
 				return nil, err
 			}
@@ -135,14 +135,22 @@ func handleEvent(
 	envID string,
 	ev wireEvent,
 	handlers map[string]hookFunc,
+	funcCtx context.Context,
+	startHandlers map[string]startFunc,
 ) (*Environment, bool, error) {
 	switch ev.Type {
 	case "callback.request":
 		if ev.Callback == nil {
 			return nil, false, nil
 		}
-		if err := dispatchCallback(ctx, serverURL, envID, ev.Callback, handlers); err != nil {
-			return nil, false, fmt.Errorf("callback %q: %w", ev.Callback.Name, err)
+		if ev.Callback.Type == "start" {
+			if err := dispatchStartCallback(funcCtx, serverURL, envID, ev.Service, ev.Callback, startHandlers); err != nil {
+				return nil, false, fmt.Errorf("start callback %q: %w", ev.Callback.Name, err)
+			}
+		} else {
+			if err := dispatchHookCallback(ctx, serverURL, envID, ev.Callback, handlers); err != nil {
+				return nil, false, fmt.Errorf("callback %q: %w", ev.Callback.Name, err)
+			}
 		}
 
 	case "environment.up":
@@ -176,8 +184,9 @@ func handleEvent(
 	return nil, false, nil
 }
 
-// dispatchCallback finds the registered handler, calls it, and POSTs the result.
-func dispatchCallback(
+// dispatchHookCallback finds the registered hook handler, calls it synchronously,
+// and POSTs the result.
+func dispatchHookCallback(
 	ctx context.Context,
 	serverURL string,
 	envID string,
@@ -186,7 +195,6 @@ func dispatchCallback(
 ) error {
 	handler, ok := handlers[cb.Name]
 	if !ok {
-		// Post error back so the server lifecycle doesn't hang forever.
 		postCallbackResult(serverURL, envID, cb.RequestID,
 			fmt.Errorf("no handler registered for callback %q", cb.Name))
 		return fmt.Errorf("no handler registered for callback %q", cb.Name)
@@ -210,22 +218,84 @@ func dispatchCallback(
 	return handlerErr
 }
 
-// postCallbackResult POSTs the callback response to the server.
-func postCallbackResult(serverURL, envID, requestID string, handlerErr error) error {
-	payload := wireCallbackResponse{RequestID: requestID}
-	if handlerErr != nil {
-		payload.Error = handlerErr.Error()
+// dispatchStartCallback launches a client-side function asynchronously and
+// immediately posts a success response. The function runs until funcCtx is
+// cancelled during cleanup. If the function returns an error before cleanup,
+// a service.error event is posted to the server to trigger teardown.
+func dispatchStartCallback(
+	funcCtx context.Context,
+	serverURL string,
+	envID string,
+	serviceName string,
+	cb *wireCallbackRequest,
+	startHandlers map[string]startFunc,
+) error {
+	handler, ok := startHandlers[cb.Name]
+	if !ok {
+		postCallbackResult(serverURL, envID, cb.RequestID,
+			fmt.Errorf("no start handler registered for callback %q", cb.Name))
+		return fmt.Errorf("no start handler registered for callback %q", cb.Name)
 	}
 
+	// Build wiring and inject into context.
+	wiring := convertWiring(cb.Wiring)
+	wiringCtx := connect.WithWiring(funcCtx, &wiring)
+
+	// Launch the function in a goroutine — it runs until funcCtx is cancelled.
+	go func() {
+		if err := handler(wiringCtx); err != nil && funcCtx.Err() == nil {
+			// Function failed before cleanup — report to server so it can
+			// fail the service and tear down the environment.
+			postServiceError(serverURL, envID, serviceName, err)
+		}
+	}()
+
+	// Respond immediately — the function is running.
+	return postCallbackResult(serverURL, envID, cb.RequestID, nil)
+}
+
+// postClientEvent POSTs a client event to the server's unified events endpoint.
+func postClientEvent(serverURL, envID string, payload any) error {
 	body, _ := json.Marshal(payload)
-	url := fmt.Sprintf("%s/environments/%s/callbacks/%s", serverURL, envID, requestID)
+	url := fmt.Sprintf("%s/environments/%s/events", serverURL, envID)
 
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("post callback result: %w", err)
+		return fmt.Errorf("post client event: %w", err)
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// postCallbackResult posts a callback.response event to the server.
+func postCallbackResult(serverURL, envID, requestID string, handlerErr error) error {
+	payload := struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Error     string `json:"error,omitempty"`
+	}{
+		Type:      "callback.response",
+		RequestID: requestID,
+	}
+	if handlerErr != nil {
+		payload.Error = handlerErr.Error()
+	}
+	return postClientEvent(serverURL, envID, payload)
+}
+
+// postServiceError posts a service.error event to the server, causing the
+// server to mark the service as failed and trigger teardown.
+func postServiceError(serverURL, envID, service string, err error) {
+	payload := struct {
+		Type    string `json:"type"`
+		Service string `json:"service"`
+		Error   string `json:"error"`
+	}{
+		Type:    "service.error",
+		Service: service,
+		Error:   err.Error(),
+	}
+	postClientEvent(serverURL, envID, payload)
 }
 
 // convertWiring converts wire format wiring to SDK Wiring type.
