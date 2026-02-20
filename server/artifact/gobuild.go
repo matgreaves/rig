@@ -81,7 +81,7 @@ func (g GoBuild) localCacheKey() (string, error) {
 		}
 	}
 
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return "go/" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (g GoBuild) remoteCacheKey() (string, error) {
@@ -91,7 +91,7 @@ func (g GoBuild) remoteCacheKey() (string, error) {
 	// The module reference is the version pin; no file hashing needed.
 	raw := fmt.Sprintf("goos:%s\ngoarch:%s\ngoversion:%s\nmodule:%s", g.goos(), g.goarch(), runtime.Version(), g.Module)
 	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:]), nil
+	return "go/" + hex.EncodeToString(sum[:]), nil
 }
 
 // Cached checks whether a compiled binary exists in outputDir from a previous

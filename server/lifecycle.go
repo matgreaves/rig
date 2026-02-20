@@ -46,12 +46,38 @@ type serviceContext struct {
 // lifecycle fails (e.g. ready check timeout), the Group kills the process.
 // The lifecycle ends with Idle so the Group stays alive until teardown.
 func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
-	return run.Sequence{
+	inner := run.Sequence{
 		publishStep(sc, ports),
 		waitForEgressesStep(sc),
 		prestartStep(sc),
 		runWithLifecycle(sc),
 	}
+	// Wrap to emit stopping/stopped events during teardown.
+	return run.Func(func(ctx context.Context) error {
+		err := inner.Run(ctx)
+		if ctx.Err() != nil {
+			// Context cancelled — service is stopping due to teardown.
+			sc.log.Publish(Event{
+				Type:        EventServiceStopping,
+				Environment: sc.envName,
+				Service:     sc.name,
+			})
+		} else if err != nil {
+			// Service crashed — mark as failed before stopped.
+			sc.log.Publish(Event{
+				Type:        EventServiceFailed,
+				Environment: sc.envName,
+				Service:     sc.name,
+				Error:       err.Error(),
+			})
+		}
+		sc.log.Publish(Event{
+			Type:        EventServiceStopped,
+			Environment: sc.envName,
+			Service:     sc.name,
+		})
+		return err
+	})
 }
 
 // publishStep allocates ports and lets the service type resolve endpoints.

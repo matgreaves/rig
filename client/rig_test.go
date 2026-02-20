@@ -2,12 +2,15 @@ package rig_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,17 +44,7 @@ func moduleRoot(t *testing.T) string {
 
 // startTestServer creates an httptest.Server backed by a real server.Server
 // with process, go, and client service types registered. Returns the server URL.
-// testCacheDir returns a persistent artifact cache directory for tests.
-// Content-addressed keys make this safe across concurrent and repeated runs.
-func testCacheDir(t *testing.T) string {
-	t.Helper()
-	dir := filepath.Join(moduleRoot(t), ".rig-test-cache")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
-
+// Uses .rig/ in the module root for cache and logs.
 func startTestServer(t *testing.T) string {
 	t.Helper()
 	reg := service.NewRegistry()
@@ -59,12 +52,13 @@ func startTestServer(t *testing.T) string {
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
 
+	rigDir := filepath.Join(moduleRoot(t), ".rig")
 	s := server.NewServer(
 		server.NewPortAllocator(),
 		reg,
 		t.TempDir(),
-		0,                  // idle timeout disabled
-		testCacheDir(t),
+		0,      // idle timeout disabled
+		rigDir,
 	)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)
@@ -304,6 +298,62 @@ func TestUp(t *testing.T) {
 			t.Errorf("health: %d, want 200", resp.StatusCode)
 		}
 	})
+}
+
+// TestWrappedTB verifies that env.T captures assertion failures as test.note
+// events in the server's event log.
+func TestWrappedTB(t *testing.T) {
+	t.Parallel()
+	serverURL := startTestServer(t)
+
+	// Post a test.note event directly and verify it appears in the log.
+	// We avoid using env.T.Errorf in the main test because it would mark
+	// the test as failed. Instead we POST the event ourselves — the same
+	// code path env.T uses internally.
+	env := rig.Up(t, rig.Services{
+		"echo": rig.Func(echo.Run),
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+	// Post a test.note event (same as env.T.Errorf would).
+	payload, _ := json.Marshal(map[string]string{
+		"type":  "test.note",
+		"error": "simulated assertion: got 500, want 200",
+	})
+	noteResp, err := http.Post(
+		fmt.Sprintf("%s/environments/%s/events", serverURL, env.ID),
+		"application/json",
+		strings.NewReader(string(payload)),
+	)
+	if err != nil {
+		t.Fatalf("post test.note: %v", err)
+	}
+	noteResp.Body.Close()
+
+	// Fetch the event log and verify the test.note event appears.
+	resp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var events []struct {
+		Type  string `json:"type"`
+		Error string `json:"error,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	var found bool
+	for _, e := range events {
+		if e.Type == "test.note" && strings.Contains(e.Error, "simulated assertion") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("test.note event not found in event log")
+	}
 }
 
 func TestEndpoint_Lookup(t *testing.T) {

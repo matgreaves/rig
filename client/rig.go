@@ -195,10 +195,14 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	// before the environment is destroyed, giving functions time to stop.
 	funcCtx, funcCancel := context.WithCancel(context.Background())
 
-	// Register cleanup: stop functions first, then DELETE the environment.
+	// Register cleanup: stop functions, destroy the environment. On failure
+	// the server writes the event log and returns the path.
 	t.Cleanup(func() {
 		funcCancel()
-		destroyEnvironment(o.serverURL, envID)
+		logFile := destroyEnvironment(o.serverURL, envID, t.Failed())
+		if logFile != "" {
+			t.Logf("rig: event log written to %s", logFile)
+		}
 	})
 
 	// Open SSE stream and process events until environment.up or failure.
@@ -212,24 +216,41 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 
 	resolved.ID = envID
 	resolved.Name = t.Name()
+	resolved.T = &rigTB{
+		TB:        t,
+		serverURL: o.serverURL,
+		envID:     envID,
+	}
 
 	return resolved
 }
 
 // destroyEnvironment sends DELETE /environments/{id}. Blocks until teardown
-// completes. Errors are swallowed — cleanup must not abort other tests.
-func destroyEnvironment(serverURL, envID string) {
-	req, err := http.NewRequest(
-		http.MethodDelete,
-		fmt.Sprintf("%s/environments/%s", serverURL, envID),
-		nil,
-	)
+// completes. When saveLog is true, the server writes the event log to disk
+// and the file path is returned. Errors are swallowed — cleanup must not
+// abort other tests.
+func destroyEnvironment(serverURL, envID string, saveLog bool) string {
+	url := fmt.Sprintf("%s/environments/%s", serverURL, envID)
+	if saveLog {
+		url += "?log=true"
+	}
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
-		return
+		return ""
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return
+		return ""
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
+	if !saveLog {
+		return ""
+	}
+
+	var result struct {
+		LogFile string `json:"log_file"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return result.LogFile
 }

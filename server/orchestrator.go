@@ -143,12 +143,20 @@ func (o *Orchestrator) cacheDir() string {
 	if o.CacheDir != "" {
 		return o.CacheDir
 	}
+	return filepath.Join(DefaultRigDir(), "cache")
+}
+
+// DefaultRigDir returns the base rig directory. It checks RIG_DIR first,
+// then falls back to ~/.rig, then $TMPDIR/rig.
+func DefaultRigDir() string {
+	if dir := os.Getenv("RIG_DIR"); dir != "" {
+		return dir
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		// Fallback to a temp-dir-adjacent location if home is unavailable.
-		return filepath.Join(os.TempDir(), "rig-cache")
+		return filepath.Join(os.TempDir(), "rig")
 	}
-	return filepath.Join(home, ".rig", "cache")
+	return filepath.Join(home, ".rig")
 }
 
 func sortedServiceNames(services map[string]spec.Service) []string {

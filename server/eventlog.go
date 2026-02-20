@@ -36,8 +36,12 @@ const (
 	EventCallbackResponse EventType = "callback.response"
 
 	// Environment lifecycle.
-	EventEnvironmentUp   EventType = "environment.up"
-	EventEnvironmentDown EventType = "environment.down"
+	EventEnvironmentDestroying EventType = "environment.destroying"
+	EventEnvironmentUp         EventType = "environment.up"
+	EventEnvironmentDown       EventType = "environment.down"
+
+	// Client-side test events.
+	EventTestNote EventType = "test.note"
 )
 
 // LogEntry holds a line of service output.
