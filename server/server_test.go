@@ -104,6 +104,47 @@ func waitForEvent(t *testing.T, ctx context.Context, ch <-chan server.Event, mat
 	}
 }
 
+// collectUntil reads events from ch until one satisfies match, collecting all
+// events (including the matching one) into a slice.
+func collectUntil(t *testing.T, ctx context.Context, ch <-chan server.Event, match func(server.Event) bool) []server.Event {
+	t.Helper()
+	var events []server.Event
+	for {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatal("SSE channel closed before expected event arrived")
+			}
+			events = append(events, e)
+			if match(e) {
+				return events
+			}
+		case <-ctx.Done():
+			t.Fatal("context cancelled before expected event arrived")
+		}
+	}
+}
+
+// hasEvent returns true if events contains one matching the predicate.
+func hasEvent(events []server.Event, match func(server.Event) bool) bool {
+	for _, e := range events {
+		if match(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// findEvent returns the first event matching the predicate, or zero value.
+func findEvent(events []server.Event, match func(server.Event) bool) (server.Event, bool) {
+	for _, e := range events {
+		if match(e) {
+			return e, true
+		}
+	}
+	return server.Event{}, false
+}
+
 // --- HTTP API contract tests (no binaries needed) ---
 
 func TestServer_NotFound(t *testing.T) {
@@ -307,6 +348,211 @@ func TestServer(t *testing.T) {
 		delResp.Body.Close()
 		if delResp.StatusCode != http.StatusOK {
 			t.Errorf("DELETE after failure: %d, want 200", delResp.StatusCode)
+		}
+	})
+
+	t.Run("ServiceCrashEvents", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// fail binary with an ingress — verify the full event sequence when
+		// a service crashes during startup.
+		envSpec := map[string]any{
+			"name": "test-crash-events",
+			"services": map[string]any{
+				"broken": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		json.NewDecoder(resp.Body).Decode(&created)
+		id := created["id"]
+		defer func() {
+			req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+			http.DefaultClient.Do(req)
+		}()
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		all := collectUntil(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentDown
+		})
+
+		// service.failed must appear with the error message.
+		failed, ok := findEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventServiceFailed && e.Service == "broken"
+		})
+		if !ok {
+			t.Fatal("no service.failed event for 'broken'")
+		}
+		if !strings.Contains(failed.Error, "exit status") {
+			t.Errorf("service.failed error = %q, want it to contain 'exit status'", failed.Error)
+		}
+
+		// service.stopped must appear after the crash.
+		if !hasEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventServiceStopped && e.Service == "broken"
+		}) {
+			t.Error("no service.stopped event after crash")
+		}
+
+		// environment.up must NOT appear — the environment never became ready.
+		if hasEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentUp
+		}) {
+			t.Error("environment.up should not appear when a service crashes")
+		}
+	})
+
+	t.Run("HealthCheckTimeoutDiagnostics", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// sleep process with an HTTP ingress and a very short ready timeout.
+		// The process stays alive but never listens on the port, so health
+		// checks fail until the timeout.
+		envSpec := map[string]any{
+			"name": "test-health-timeout",
+			"services": map[string]any{
+				"sleeper": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: "sleep"}),
+					"args":   []string{"3600"},
+					"ingresses": map[string]any{
+						"default": map[string]any{
+							"protocol": "http",
+							"ready": map[string]any{
+								"timeout": "200ms",
+							},
+						},
+					},
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		json.NewDecoder(resp.Body).Decode(&created)
+		id := created["id"]
+		defer func() {
+			req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+			http.DefaultClient.Do(req)
+		}()
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		all := collectUntil(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentDown
+		})
+
+		// health.check_failed events should have been emitted during polling.
+		if !hasEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventHealthCheckFailed && e.Service == "sleeper"
+		}) {
+			t.Error("no health.check_failed events emitted during polling")
+		}
+
+		// service.failed should include the last check error (not just "context deadline exceeded").
+		failed, ok := findEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventServiceFailed && e.Service == "sleeper"
+		})
+		if !ok {
+			t.Fatal("no service.failed event for 'sleeper'")
+		}
+		if !strings.Contains(failed.Error, "last error:") {
+			t.Errorf("timeout error should include last check error, got: %q", failed.Error)
+		}
+		if !strings.Contains(failed.Error, "200ms") {
+			t.Errorf("timeout error should include the timeout duration, got: %q", failed.Error)
+		}
+	})
+
+	t.Run("MultiServiceCrashCleanup", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Two services: echo (healthy) and broken (crashes immediately).
+		// Both are independent — no egress dependency. Verify both get
+		// stopped when one crashes (the orchestrator tears down everything).
+		envSpec := map[string]any{
+			"name": "test-multi-crash",
+			"services": map[string]any{
+				"api": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
+				},
+				"broken": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		json.NewDecoder(resp.Body).Decode(&created)
+		id := created["id"]
+		defer func() {
+			req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+			http.DefaultClient.Do(req)
+		}()
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		all := collectUntil(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentDown
+		})
+
+		// broken should have a service.failed event.
+		if !hasEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventServiceFailed && e.Service == "broken"
+		}) {
+			t.Error("no service.failed for 'broken'")
+		}
+
+		// Both services should get service.stopped — verifies cleanup of
+		// the healthy service when a sibling crashes.
+		for _, svc := range []string{"api", "broken"} {
+			if !hasEvent(all, func(e server.Event) bool {
+				return e.Type == server.EventServiceStopped && e.Service == svc
+			}) {
+				t.Errorf("no service.stopped for %q — cleanup incomplete", svc)
+			}
+		}
+
+		// environment.up should NOT appear.
+		if hasEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentUp
+		}) {
+			t.Error("environment.up should not appear when a service crashes")
 		}
 	})
 

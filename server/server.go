@@ -432,6 +432,9 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, inst.log.Events())
 }
 
+// logMaxAge is how long event log files are kept before pruning.
+const logMaxAge = 72 * time.Hour
+
 // writeEventLog writes both a structured JSONL event log and a human-readable
 // timeline summary to {rigDir}/logs/. The JSONL file (one event per line) is
 // the source of truth for tooling; the .log file is a convenience rendering
@@ -441,6 +444,8 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return "", err
 	}
+
+	pruneOldLogs(logDir, logMaxAge)
 
 	events := inst.log.Events()
 	if len(events) == 0 {
@@ -599,6 +604,32 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 	os.WriteFile(base+".log", []byte(b.String()+"\n"), 0o644)
 
 	return jsonlPath, nil
+}
+
+// pruneOldLogs removes .jsonl and .log files older than maxAge from dir.
+// Best-effort — errors are silently ignored.
+func pruneOldLogs(dir string, maxAge time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonl") && !strings.HasSuffix(name, ".log") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			os.Remove(filepath.Join(dir, name))
+		}
+	}
 }
 
 func formatBytes(b int64) string {
