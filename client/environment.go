@@ -3,6 +3,7 @@ package rig
 import (
 	"fmt"
 	"sort"
+	"testing"
 )
 
 // Environment is the resolved, running environment returned by Up.
@@ -11,6 +12,13 @@ type Environment struct {
 	ID       string
 	Name     string
 	Services map[string]ResolvedService
+
+	// T is a wrapped testing.TB that automatically captures assertion
+	// failures (Fatal, Fatalf, Error, Errorf) as test.note events in
+	// the rig event log. Pass env.T to assertion libraries (testify,
+	// is, require, etc.) so failures appear in the event timeline
+	// alongside server-side events. File:line reporting is preserved.
+	T testing.TB
 }
 
 // ResolvedService holds the resolved endpoints for a single service.

@@ -3,8 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +23,7 @@ type Server struct {
 	ports    *PortAllocator
 	registry *service.Registry
 	tempBase string
-	cacheDir string // artifact cache directory; empty → Orchestrator default (~/.rig/cache/)
+	rigDir   string // base rig directory; cache/ and logs/ live under this
 
 	mu   sync.Mutex
 	envs map[string]*envInstance
@@ -39,20 +43,24 @@ type envInstance struct {
 
 // NewServer creates a Server and registers all HTTP routes.
 // Pass idleTimeout = 0 to disable automatic shutdown.
-// Pass cacheDir = "" to use the default artifact cache (~/.rig/cache/).
+// Pass rigDir = "" to use the default (~/.rig via DefaultRigDir()).
+// Cache lives at {rigDir}/cache/, event logs at {rigDir}/logs/.
 func NewServer(
 	ports *PortAllocator,
 	registry *service.Registry,
 	tempBase string,
 	idleTimeout time.Duration,
-	cacheDir string,
+	rigDir string,
 ) *Server {
+	if rigDir == "" {
+		rigDir = DefaultRigDir()
+	}
 	s := &Server{
 		mux:      http.NewServeMux(),
 		ports:    ports,
 		registry: registry,
 		tempBase: tempBase,
-		cacheDir: cacheDir,
+		rigDir:   rigDir,
 		envs:     make(map[string]*envInstance),
 		idle:     NewIdleTimer(idleTimeout),
 	}
@@ -62,6 +70,7 @@ func NewServer(
 	s.mux.HandleFunc("POST /environments/{id}/events", s.handleClientEvent)
 	s.mux.HandleFunc("DELETE /environments/{id}", s.handleDeleteEnvironment)
 	s.mux.HandleFunc("GET /environments/{id}", s.handleGetEnvironment)
+	s.mux.HandleFunc("GET /environments/{id}/log", s.handleGetLog)
 
 	return s
 }
@@ -107,7 +116,7 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 		Registry: s.registry,
 		Log:      envLog,
 		TempBase: s.tempBase,
-		CacheDir: s.cacheDir,
+		CacheDir: filepath.Join(s.rigDir, "cache"),
 	}
 
 	runner, id, err := orch.Orchestrate(&env)
@@ -208,6 +217,7 @@ type clientEvent struct {
 // field determines how the event is processed:
 //   - "callback.response": unblocks a waiting lifecycle step
 //   - "service.error": marks a client-side service as failed
+//   - "test.note": records a test assertion or diagnostic message
 func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.getInstance(w, r)
 	if !ok {
@@ -225,6 +235,7 @@ func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 		inst.log.Publish(Event{
 			Type:        EventCallbackResponse,
 			Environment: inst.spec.Name,
+			Service:     ev.Service,
 			Result: &CallbackResponse{
 				RequestID: ev.RequestID,
 				Error:     ev.Error,
@@ -237,6 +248,13 @@ func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 			Type:        EventServiceFailed,
 			Environment: inst.spec.Name,
 			Service:     ev.Service,
+			Error:       ev.Error,
+		})
+
+	case "test.note":
+		inst.log.Publish(Event{
+			Type:        EventTestNote,
+			Environment: inst.spec.Name,
 			Error:       ev.Error,
 		})
 
@@ -268,13 +286,39 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Only emit environment.destroying if the environment is still running.
+	// If a service crash already brought it down, destroying doesn't apply —
+	// nobody requested teardown, it just died.
+	alreadyDown := false
+	for _, e := range inst.log.Events() {
+		if e.Type == EventEnvironmentDown {
+			alreadyDown = true
+			break
+		}
+	}
+	if !alreadyDown {
+		inst.log.Publish(Event{
+			Type:        EventEnvironmentDestroying,
+			Environment: inst.spec.Name,
+		})
+	}
+
 	inst.cancel()
 	<-inst.done
 
 	s.ports.Release(id)
 	s.idle.EnvironmentDestroyed()
 
-	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "destroyed"})
+	result := map[string]any{
+		"id":     id,
+		"status": "destroyed",
+	}
+	if r.URL.Query().Get("log") == "true" {
+		if path, err := s.writeEventLog(inst); err == nil {
+			result["log_file"] = path
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // getInstance looks up an environment by the {id} path value, writing a 404
@@ -353,6 +397,106 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 		Name:     inst.spec.Name,
 		Services: services,
 	}
+}
+
+// handleGetLog handles GET /environments/{id}/log.
+//
+// Returns the full event log as a JSON array, suitable for diagnostics
+// when a test fails. Events are ordered by sequence number.
+func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
+	inst, ok := s.getInstance(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, inst.log.Events())
+}
+
+// writeEventLog writes both a structured JSONL event log and a human-readable
+// timeline summary to {rigDir}/logs/. The JSONL file (one event per line) is
+// the source of truth for tooling; the .log file is a convenience rendering
+// for quick scanning. Returns the JSONL file path on success.
+func (s *Server) writeEventLog(inst *envInstance) (string, error) {
+	logDir := filepath.Join(s.rigDir, "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return "", err
+	}
+
+	events := inst.log.Events()
+	if len(events) == 0 {
+		return "", fmt.Errorf("no events")
+	}
+
+	safe := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(inst.spec.Name)
+	base := filepath.Join(logDir, safe+"-"+inst.id)
+
+	// Write structured JSONL — one event per line for streaming parsers.
+	jsonlPath := base + ".jsonl"
+	var jb strings.Builder
+	enc := json.NewEncoder(&jb)
+	enc.SetEscapeHTML(false)
+	for _, e := range events {
+		if err := enc.Encode(e); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(jsonlPath, []byte(jb.String()), 0o644); err != nil {
+		return "", err
+	}
+
+	// Collect the last few log lines per service so we can include them
+	// in the timeline when a service fails.
+	const tailLines = 10
+	serviceLogs := make(map[string][]string)
+	for _, e := range events {
+		if e.Type == EventServiceLog && e.Log != nil {
+			// A single log event may contain multiple newline-separated lines.
+			for _, line := range strings.Split(strings.TrimRight(e.Log.Data, "\n"), "\n") {
+				serviceLogs[e.Service] = append(serviceLogs[e.Service], line)
+			}
+			if len(serviceLogs[e.Service]) > tailLines {
+				sl := serviceLogs[e.Service]
+				serviceLogs[e.Service] = sl[len(sl)-tailLines:]
+			}
+		}
+	}
+
+	// Write human-readable timeline summary alongside.
+	var b strings.Builder
+	start := events[0].Timestamp
+	fmt.Fprintf(&b, "rig: event timeline for environment %s:", inst.id)
+	for _, e := range events {
+		// Skip noisy per-line log events — the timeline is a structural overview.
+		if e.Type == EventServiceLog {
+			continue
+		}
+		elapsed := e.Timestamp.Sub(start).Seconds()
+		subject := e.Service
+		if subject == "" {
+			subject = e.Artifact
+		}
+		detail := e.Error
+		if subject != "" && detail != "" {
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %-12s %s", elapsed, e.Type, subject, detail)
+		} else if subject != "" {
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %s", elapsed, e.Type, subject)
+		} else if detail != "" {
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %s", elapsed, e.Type, detail)
+		} else {
+			fmt.Fprintf(&b, "\n  %5.2fs  %s", elapsed, e.Type)
+		}
+		// After a service.failed event, include the tail of that service's output.
+		if e.Type == EventServiceFailed {
+			if logs, ok := serviceLogs[e.Service]; ok && len(logs) > 0 {
+				for _, line := range logs {
+					fmt.Fprintf(&b, "\n          | %s", line)
+				}
+			}
+		}
+	}
+	// Best-effort — the JSONL file is the primary artifact.
+	os.WriteFile(base+".log", []byte(b.String()+"\n"), 0o644)
+
+	return jsonlPath, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

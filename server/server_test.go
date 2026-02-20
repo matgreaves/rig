@@ -29,7 +29,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		reg,
 		t.TempDir(),
 		0,           // idle timeout disabled
-		t.TempDir(), // isolated artifact cache
+		t.TempDir(), // isolated rig dir
 	)
 	ts := httptest.NewServer(s)
 	t.Cleanup(ts.Close)

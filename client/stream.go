@@ -148,7 +148,7 @@ func handleEvent(
 				return nil, false, fmt.Errorf("start callback %q: %w", ev.Callback.Name, err)
 			}
 		} else {
-			if err := dispatchHookCallback(ctx, serverURL, envID, ev.Callback, handlers); err != nil {
+			if err := dispatchHookCallback(ctx, serverURL, envID, ev.Service, ev.Callback, handlers); err != nil {
 				return nil, false, fmt.Errorf("callback %q: %w", ev.Callback.Name, err)
 			}
 		}
@@ -190,12 +190,13 @@ func dispatchHookCallback(
 	ctx context.Context,
 	serverURL string,
 	envID string,
+	serviceName string,
 	cb *wireCallbackRequest,
 	handlers map[string]hookFunc,
 ) error {
 	handler, ok := handlers[cb.Name]
 	if !ok {
-		postCallbackResult(serverURL, envID, cb.RequestID,
+		postCallbackResult(serverURL, envID, serviceName, cb.RequestID,
 			fmt.Errorf("no handler registered for callback %q", cb.Name))
 		return fmt.Errorf("no handler registered for callback %q", cb.Name)
 	}
@@ -212,7 +213,7 @@ func dispatchHookCallback(
 		handlerErr = handler(ctx, wiring)
 	}()
 
-	if err := postCallbackResult(serverURL, envID, cb.RequestID, handlerErr); err != nil {
+	if err := postCallbackResult(serverURL, envID, serviceName, cb.RequestID, handlerErr); err != nil {
 		return err
 	}
 	return handlerErr
@@ -232,7 +233,7 @@ func dispatchStartCallback(
 ) error {
 	handler, ok := startHandlers[cb.Name]
 	if !ok {
-		postCallbackResult(serverURL, envID, cb.RequestID,
+		postCallbackResult(serverURL, envID, serviceName, cb.RequestID,
 			fmt.Errorf("no start handler registered for callback %q", cb.Name))
 		return fmt.Errorf("no start handler registered for callback %q", cb.Name)
 	}
@@ -251,7 +252,7 @@ func dispatchStartCallback(
 	}()
 
 	// Respond immediately — the function is running.
-	return postCallbackResult(serverURL, envID, cb.RequestID, nil)
+	return postCallbackResult(serverURL, envID, serviceName, cb.RequestID, nil)
 }
 
 // postClientEvent POSTs a client event to the server's unified events endpoint.
@@ -268,13 +269,15 @@ func postClientEvent(serverURL, envID string, payload any) error {
 }
 
 // postCallbackResult posts a callback.response event to the server.
-func postCallbackResult(serverURL, envID, requestID string, handlerErr error) error {
+func postCallbackResult(serverURL, envID, serviceName, requestID string, handlerErr error) error {
 	payload := struct {
 		Type      string `json:"type"`
+		Service   string `json:"service"`
 		RequestID string `json:"request_id"`
 		Error     string `json:"error,omitempty"`
 	}{
 		Type:      "callback.response",
+		Service:   serviceName,
 		RequestID: requestID,
 	}
 	if handlerErr != nil {
