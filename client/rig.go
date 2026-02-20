@@ -203,13 +203,13 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	// before the environment is destroyed, giving functions time to stop.
 	funcCtx, funcCancel := context.WithCancel(context.Background())
 
-	// Register cleanup: stop functions, destroy the environment. On failure
-	// the server writes the event log and returns the path.
+	// Register cleanup: stop functions, destroy the environment.
+	// Always write the event log so it's available for inspection.
 	t.Cleanup(func() {
 		funcCancel()
-		logFile := destroyEnvironment(o.serverURL, envID, t.Failed())
+		logFile := destroyEnvironment(o.serverURL, envID)
 		if logFile != "" {
-			t.Logf("rig: event log written to %s", logFile)
+			t.Logf("rig: event log: %s", logFile)
 		}
 	})
 
@@ -233,15 +233,11 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	return resolved
 }
 
-// destroyEnvironment sends DELETE /environments/{id}. Blocks until teardown
-// completes. When saveLog is true, the server writes the event log to disk
-// and the file path is returned. Errors are swallowed — cleanup must not
-// abort other tests.
-func destroyEnvironment(serverURL, envID string, saveLog bool) string {
-	url := fmt.Sprintf("%s/environments/%s", serverURL, envID)
-	if saveLog {
-		url += "?log=true"
-	}
+// destroyEnvironment sends DELETE /environments/{id}?log=true. Blocks until
+// teardown completes. The server writes the event log to disk and returns the
+// path. Errors are swallowed — cleanup must not abort other tests.
+func destroyEnvironment(serverURL, envID string) string {
+	url := fmt.Sprintf("%s/environments/%s?log=true", serverURL, envID)
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
 		return ""
@@ -251,10 +247,6 @@ func destroyEnvironment(serverURL, envID string, saveLog bool) string {
 		return ""
 	}
 	defer resp.Body.Close()
-
-	if !saveLog {
-		return ""
-	}
 
 	var result struct {
 		LogFile string `json:"log_file"`
