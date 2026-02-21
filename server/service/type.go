@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/matgreaves/rig/server/artifact"
+	"github.com/matgreaves/rig/server/ready"
 	"github.com/matgreaves/rig/spec"
 	"github.com/matgreaves/run"
 )
@@ -55,6 +56,50 @@ type ArtifactParams struct {
 // service types that have no artifacts need not implement it.
 type ArtifactProvider interface {
 	Artifacts(params ArtifactParams) ([]artifact.Artifact, error)
+}
+
+// InitParams provides the context needed for server-side init hook execution.
+type InitParams struct {
+	ServiceName string
+	InstanceID  string
+	Spec        spec.Service
+	Ingresses   map[string]spec.Endpoint
+	Egresses    map[string]spec.Endpoint
+	Hook        *spec.HookSpec
+	Stdout      io.Writer
+	Stderr      io.Writer
+}
+
+// Initializer is implemented by service types that handle server-side init
+// hooks (e.g. Postgres running SQL via docker exec). It is optional —
+// service types that only use client_func hooks need not implement it.
+//
+// Initializer hooks run during the init phase only (after the service is
+// healthy). Prestart hooks must be client_func — the service isn't running
+// yet so there's nothing to exec into.
+type Initializer interface {
+	Init(ctx context.Context, params InitParams) error
+}
+
+// ReadyCheckParams provides context for building a custom ready checker.
+type ReadyCheckParams struct {
+	ServiceName string
+	InstanceID  string
+	IngressName string
+	Endpoint    spec.Endpoint
+	Spec        spec.Service
+}
+
+// ReadyChecker is implemented by service types that provide a custom
+// health check (e.g. Postgres using pg_isready instead of TCP dial).
+// Optional — service types without this use the default protocol-based
+// check.
+//
+// When implemented, the custom checker replaces the default checker entirely
+// — including any ReadySpec.Type on the ingress. Timeout and interval from
+// the ReadySpec are still honored by the polling loop.
+type ReadyChecker interface {
+	ReadyCheck(params ReadyCheckParams) ready.Checker
 }
 
 // Type defines how a service type publishes endpoints and starts.

@@ -81,8 +81,8 @@ type egressDef struct {
 }
 
 type hooksDef struct {
-	prestart hook
-	init     hook
+	prestart []hook
+	init     []hook
 }
 
 type hook interface {
@@ -92,6 +92,12 @@ type hook interface {
 type hookFunc func(ctx context.Context, w Wiring) error
 
 func (hookFunc) rigHook() {}
+
+type sqlHook struct {
+	statements []string
+}
+
+func (sqlHook) rigHook() {}
 
 // startFunc is a function that runs as a service in the test process.
 type startFunc func(ctx context.Context) error
@@ -139,14 +145,23 @@ func WithObserve() Option {
 // Up calls t.Fatal with a descriptive error message.
 func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	t.Helper()
+	env, err := up(t, services, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env
+}
 
+// up is the internal implementation of Up. It returns an error instead of
+// calling t.Fatal, making it testable for expected-failure cases.
+func up(t testing.TB, services Services, opts ...Option) (*Environment, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(&o)
 	}
 
 	if o.serverURL == "" {
-		t.Fatal("rig: no server address; set RIG_SERVER_ADDR or use rig.WithServer()")
+		return nil, fmt.Errorf("rig: no server address; set RIG_SERVER_ADDR or use rig.WithServer()")
 	}
 
 	// Trim trailing slash for consistent URL construction.
@@ -157,13 +172,13 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	startHandlers := make(map[string]startFunc)
 	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers, o.observe)
 	if err != nil {
-		t.Fatalf("rig: build spec: %v", err)
+		return nil, fmt.Errorf("rig: build spec: %v", err)
 	}
 
 	// POST /environments
 	body, err := json.Marshal(specEnv)
 	if err != nil {
-		t.Fatalf("rig: marshal spec: %v", err)
+		return nil, fmt.Errorf("rig: marshal spec: %v", err)
 	}
 
 	resp, err := http.Post(
@@ -172,7 +187,7 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		t.Fatalf("rig: create environment: %v", err)
+		return nil, fmt.Errorf("rig: create environment: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -181,20 +196,20 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 			ValidationErrors []string `json:"validation_errors"`
 		}
 		json.NewDecoder(resp.Body).Decode(&result)
-		t.Fatalf("rig: spec validation failed:\n  %s",
+		return nil, fmt.Errorf("rig: spec validation failed:\n  %s",
 			strings.Join(result.ValidationErrors, "\n  "))
 	}
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("rig: create environment: HTTP %d: %s", resp.StatusCode, respBody)
+		return nil, fmt.Errorf("rig: create environment: HTTP %d: %s", resp.StatusCode, respBody)
 	}
 
 	var created struct {
 		ID string `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("rig: decode create response: %v", err)
+		return nil, fmt.Errorf("rig: decode create response: %v", err)
 	}
 
 	envID := created.ID
@@ -217,9 +232,9 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	ctx, cancel := context.WithTimeout(context.Background(), o.startupTimeout)
 	defer cancel()
 
-	resolved, err := streamUntilReady(ctx, t, o.serverURL, envID, handlers, funcCtx, startHandlers)
+	resolved, err := streamUntilReady(ctx, o.serverURL, envID, handlers, funcCtx, startHandlers)
 	if err != nil {
-		t.Fatalf("rig: %v", err)
+		return nil, fmt.Errorf("rig: %v", err)
 	}
 
 	resolved.ID = envID
@@ -230,7 +245,7 @@ func Up(t testing.TB, services Services, opts ...Option) *Environment {
 		envID:     envID,
 	}
 
-	return resolved
+	return resolved, nil
 }
 
 // destroyEnvironment sends DELETE /environments/{id}?log=true. Blocks until

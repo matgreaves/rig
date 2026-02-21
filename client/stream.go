@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"testing"
 
 	"github.com/matgreaves/rig/connect"
 )
@@ -82,7 +81,6 @@ type wireEndpoint struct {
 // startHandlers maps start callback names to functions launched asynchronously.
 func streamUntilReady(
 	ctx context.Context,
-	t testing.TB,
 	serverURL string,
 	envID string,
 	handlers map[string]hookFunc,
@@ -108,6 +106,7 @@ func streamUntilReady(
 
 	scanner := bufio.NewScanner(resp.Body)
 	var eventType, data string
+	var failures []string
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -131,7 +130,7 @@ func streamUntilReady(
 				continue
 			}
 
-			result, done, err := handleEvent(ctx, t, serverURL, envID, ev, handlers, funcCtx, startHandlers)
+			result, done, err := handleEvent(ctx, serverURL, envID, ev, handlers, funcCtx, startHandlers, &failures)
 			if err != nil {
 				return nil, err
 			}
@@ -151,15 +150,17 @@ func streamUntilReady(
 }
 
 // handleEvent processes a single SSE event. Returns (result, done, error).
+// Failures from service.failed and artifact.failed events are accumulated
+// and included in the environment.down error.
 func handleEvent(
 	ctx context.Context,
-	t testing.TB,
 	serverURL string,
 	envID string,
 	ev wireEvent,
 	handlers map[string]hookFunc,
 	funcCtx context.Context,
 	startHandlers map[string]startFunc,
+	failures *[]string,
 ) (*Environment, bool, error) {
 	switch ev.Type {
 	case "callback.request":
@@ -181,13 +182,16 @@ func handleEvent(
 		return resolved, true, nil
 
 	case "environment.down":
-		return nil, false, fmt.Errorf("environment failed (received environment.down without environment.up)")
+		if len(*failures) > 0 {
+			return nil, false, fmt.Errorf("environment failed:\n  %s", strings.Join(*failures, "\n  "))
+		}
+		return nil, false, fmt.Errorf("environment failed")
 
 	case "service.failed":
-		t.Logf("rig: service %q failed: %s", ev.Service, ev.Error)
+		*failures = append(*failures, fmt.Sprintf("service %q: %s", ev.Service, ev.Error))
 
 	case "artifact.failed":
-		t.Logf("rig: artifact %q failed: %s", ev.Artifact, ev.Error)
+		*failures = append(*failures, fmt.Sprintf("artifact %q: %s", ev.Artifact, ev.Error))
 	}
 
 	return nil, false, nil

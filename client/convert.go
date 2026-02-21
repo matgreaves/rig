@@ -42,6 +42,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return funcToSpec(d, handlers, startHandlers)
 	case *ContainerDef:
 		return containerToSpec(d, handlers)
+	case *PostgresDef:
+		return postgresToSpec(d, handlers)
 	case *CustomDef:
 		return customToSpec(d, handlers)
 	default:
@@ -111,6 +113,28 @@ func funcToSpec(d *FuncDef, handlers map[string]hookFunc, startHandlers map[stri
 		Ingresses: ingressesToSpec(d.ingresses),
 		Egresses:  egressesToSpec(d.egresses),
 		Hooks:     hooks,
+	}, nil
+}
+
+func postgresToSpec(d *PostgresDef, handlers map[string]hookFunc) (spec.Service, error) {
+	var cfg json.RawMessage
+	if d.image != "" {
+		cfg, _ = json.Marshal(map[string]string{"image": d.image})
+	}
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return spec.Service{}, err
+	}
+
+	return spec.Service{
+		Type:   "postgres",
+		Config: cfg,
+		Ingresses: map[string]spec.IngressSpec{
+			"default": {Protocol: spec.TCP, ContainerPort: 5432},
+		},
+		Egresses: egressesToSpec(d.egresses),
+		Hooks:    hooks,
 	}, nil
 }
 
@@ -209,26 +233,26 @@ func egressesToSpec(egresses map[string]egressDef) map[string]spec.EgressSpec {
 }
 
 func hooksToSpec(h hooksDef, handlers map[string]hookFunc) (*spec.Hooks, error) {
-	if h.prestart == nil && h.init == nil {
+	if len(h.prestart) == 0 && len(h.init) == 0 {
 		return nil, nil
 	}
 
 	var hooks spec.Hooks
 
-	if h.prestart != nil {
-		hs, err := hookToSpec(h.prestart, handlers)
+	for _, hk := range h.prestart {
+		hs, err := hookToSpec(hk, handlers)
 		if err != nil {
 			return nil, fmt.Errorf("prestart: %w", err)
 		}
-		hooks.Prestart = hs
+		hooks.Prestart = append(hooks.Prestart, hs)
 	}
 
-	if h.init != nil {
-		hs, err := hookToSpec(h.init, handlers)
+	for _, hk := range h.init {
+		hs, err := hookToSpec(hk, handlers)
 		if err != nil {
 			return nil, fmt.Errorf("init: %w", err)
 		}
-		hooks.Init = hs
+		hooks.Init = append(hooks.Init, hs)
 	}
 
 	return &hooks, nil
@@ -242,6 +266,12 @@ func hookToSpec(h hook, handlers map[string]hookFunc) (*spec.HookSpec, error) {
 		return &spec.HookSpec{
 			Type:       "client_func",
 			ClientFunc: &spec.ClientFuncSpec{Name: name},
+		}, nil
+	case sqlHook:
+		cfg, _ := json.Marshal(map[string]any{"statements": hk.statements})
+		return &spec.HookSpec{
+			Type:   "sql",
+			Config: cfg,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported hook type: %T", h)

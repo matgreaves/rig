@@ -92,12 +92,12 @@ func (d *ContainerDef) EgressAs(name, service string, ingress ...string) *Contai
 
 // InitHook registers a client-side init hook function.
 func (d *ContainerDef) InitHook(fn func(ctx context.Context, w Wiring) error) *ContainerDef {
-	d.hooks.init = hookFunc(fn)
+	d.hooks.init = append(d.hooks.init, hookFunc(fn))
 	return d
 }
 
 // PrestartHook registers a client-side prestart hook function.
 func (d *ContainerDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *ContainerDef {
-	d.hooks.prestart = hookFunc(fn)
+	d.hooks.prestart = append(d.hooks.prestart, hookFunc(fn))
 	return d
 }

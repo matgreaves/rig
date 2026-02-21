@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"github.com/matgreaves/rig/server/artifact"
@@ -71,7 +72,7 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 				Type:        EventServiceFailed,
 				Environment: sc.envName,
 				Service:     sc.name,
-				Error:       err.Error(),
+				Error:       stripRunPrefixes(err.Error()),
 			})
 		}
 		sc.log.Publish(Event{
@@ -238,10 +239,10 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 	})
 }
 
-// prestartStep runs the prestart hook if configured.
+// prestartStep runs the prestart hooks if configured.
 func prestartStep(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
-		if sc.spec.Hooks == nil || sc.spec.Hooks.Prestart == nil {
+		if sc.spec.Hooks == nil || len(sc.spec.Hooks.Prestart) == 0 {
 			return nil
 		}
 
@@ -251,8 +252,12 @@ func prestartStep(sc *serviceContext) run.Runner {
 			Service:     sc.name,
 		})
 
-		hook := sc.spec.Hooks.Prestart
-		return executeHook(ctx, sc, hook, true)
+		for _, hook := range sc.spec.Hooks.Prestart {
+			if err := executeHook(ctx, sc, hook, true); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -322,14 +327,31 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 }
 
 // readyCheckRunner polls all ingresses until they're ready.
+// If the service type implements ReadyChecker, its custom checker is used
+// instead of the default protocol-based one.
 func readyCheckRunner(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
+		rc, hasCustom := sc.svcType.(service.ReadyChecker)
+
 		for ingressName, ep := range sc.ingresses {
 			var readySpec *spec.ReadySpec
 			if ingSpec, ok := sc.spec.Ingresses[ingressName]; ok {
 				readySpec = ingSpec.Ready
 			}
-			checker := ready.ForEndpoint(ep, readySpec)
+
+			var checker ready.Checker
+			if hasCustom {
+				checker = rc.ReadyCheck(service.ReadyCheckParams{
+					ServiceName: sc.name,
+					InstanceID:  sc.instanceID,
+					IngressName: ingressName,
+					Endpoint:    ep,
+					Spec:        sc.spec,
+				})
+			} else {
+				checker = ready.ForEndpoint(ep, readySpec)
+			}
+
 			ingress := ingressName // capture for closure
 			onFailure := func(err error) {
 				sc.log.Publish(Event{
@@ -348,10 +370,10 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 	})
 }
 
-// initRunner runs the init hook if configured.
+// initRunner runs the init hooks if configured.
 func initRunner(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
-		if sc.spec.Hooks == nil || sc.spec.Hooks.Init == nil {
+		if sc.spec.Hooks == nil || len(sc.spec.Hooks.Init) == 0 {
 			return nil
 		}
 
@@ -361,8 +383,12 @@ func initRunner(sc *serviceContext) run.Runner {
 			Service:     sc.name,
 		})
 
-		hook := sc.spec.Hooks.Init
-		return executeHook(ctx, sc, hook, false)
+		for _, hook := range sc.spec.Hooks.Init {
+			if err := executeHook(ctx, sc, hook, false); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -422,12 +448,45 @@ func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackTyp
 }
 
 // executeHook dispatches a hook to the appropriate executor.
-// Only client_func hooks are supported (via callback events).
+// client_func hooks are dispatched via callback events to the client SDK.
+// All other hook types are delegated to the service type's Initializer
+// and are only permitted during the init phase (includeEgresses=false).
 func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, includeEgresses bool) error {
-	if hook.Type != "client_func" || hook.ClientFunc == nil {
-		return fmt.Errorf("unsupported hook type %q (only client_func supported)", hook.Type)
+	if hook.Type == "client_func" {
+		if hook.ClientFunc == nil {
+			return fmt.Errorf("client_func hook missing client_func spec")
+		}
+		return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
 	}
-	return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
+
+	// Server-side hooks only run during init — the service must be running
+	// for the server to exec into it. Prestart hooks (includeEgresses=true)
+	// must be client_func.
+	if includeEgresses {
+		return fmt.Errorf("server-side hook type %q is not supported in prestart phase (only client_func hooks allowed)", hook.Type)
+	}
+
+	initializer, ok := sc.svcType.(service.Initializer)
+	if !ok {
+		return fmt.Errorf("unsupported hook type %q for service type %T", hook.Type, sc.svcType)
+	}
+
+	logWriter := &eventLogWriter{
+		log:     sc.log,
+		envName: sc.envName,
+		service: sc.name,
+	}
+
+	return initializer.Init(ctx, service.InitParams{
+		ServiceName: sc.name,
+		InstanceID:  sc.instanceID,
+		Spec:        sc.spec,
+		Ingresses:   sc.ingresses,
+		Egresses:    sc.egresses,
+		Hook:        hook,
+		Stdout:      &teeWriter{logWriter, "stdout"},
+		Stderr:      &teeWriter{logWriter, "stderr"},
+	})
 }
 
 // teeWriter writes service output to the event log.
@@ -509,4 +568,15 @@ func createTempDirs(envDir string, serviceNames []string) error {
 		}
 	}
 	return nil
+}
+
+// runPrefixRE matches the error prefixes added by run.Sequence and run.Group.
+// These are orchestration details (step indices, group names) that obscure the
+// actual failure cause in user-facing output.
+var runPrefixRE = regexp.MustCompile(`^(sequence \[\d+:\d+\]: |run\.Group\[[^\]]+\]: )+`)
+
+// stripRunPrefixes removes leading run.Sequence/run.Group error prefixes,
+// leaving only the domain error message.
+func stripRunPrefixes(s string) string {
+	return runPrefixRE.ReplaceAllString(s, "")
 }

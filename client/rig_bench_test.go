@@ -91,6 +91,7 @@ func benchTestServer(tb testing.TB) string {
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
+	reg.Register("postgres", service.Postgres{})
 
 	rigDir := filepath.Join(benchModuleRoot(tb), ".rig")
 	s := server.NewServer(
