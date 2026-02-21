@@ -67,4 +67,3 @@ func sortedKeys[V any](m map[string]V) string {
 	sort.Strings(keys)
 	return fmt.Sprintf("%v", keys)
 }
-

@@ -12,6 +12,7 @@ import (
 	"github.com/matgreaves/rig/server/service"
 	"github.com/matgreaves/rig/spec"
 	"github.com/matgreaves/run"
+	"github.com/matgreaves/run/onexit"
 )
 
 // Orchestrator coordinates the lifecycle of all services in an environment.
@@ -38,12 +39,14 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	// Generate instance ID.
 	instanceID := generateID()
 
-	// Create temp directories.
+	// Create temp directories and register cleanup with onexit so they're
+	// removed even if rigd is killed ungracefully.
 	envDir := filepath.Join(o.tempBase(), instanceID)
 	serviceNames := sortedServiceNames(env.Services)
 	if err := createTempDirs(envDir, serviceNames); err != nil {
 		return nil, "", fmt.Errorf("create temp dirs: %w", err)
 	}
+	cancelTempCleanup, _ := onexit.OnExitF("rm -rf %s", envDir)
 
 	// Collect artifacts from all ArtifactProvider service types.
 	var allArtifacts []artifact.Artifact
@@ -130,7 +133,17 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 		return group.Run(ctx)
 	})
 
-	return run.Sequence{artifactPhase, servicePhase}, instanceID, nil
+	lifecycle := run.Func(func(ctx context.Context) error {
+		err := run.Sequence{artifactPhase, servicePhase}.Run(ctx)
+		// Clean up temp dirs on graceful exit and cancel the onexit backup.
+		os.RemoveAll(envDir)
+		if cancelTempCleanup != nil {
+			cancelTempCleanup()
+		}
+		return err
+	})
+
+	return lifecycle, instanceID, nil
 }
 
 func (o *Orchestrator) tempBase() string {

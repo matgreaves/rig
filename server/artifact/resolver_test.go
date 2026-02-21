@@ -18,7 +18,7 @@ type stubResolver struct {
 	cacheKey   string
 	output     artifact.Output
 	cachedOut  *artifact.Output // if non-nil, Cached returns this output as a hit
-	resolveN   *atomic.Int64   // counts Resolve calls
+	resolveN   *atomic.Int64    // counts Resolve calls
 	retryable  bool
 	resolveErr error
 }
@@ -95,9 +95,9 @@ func TestResolve_CacheHit(t *testing.T) {
 	cached := artifact.Output{Path: "/cached/binary"}
 	var called atomic.Int64
 	resolver := &stubResolver{
-		cacheKey: "abc123",
+		cacheKey:  "abc123",
 		cachedOut: &cached, // stub reports a cache hit
-		resolveN: &called,
+		resolveN:  &called,
 	}
 
 	artifacts := []artifact.Artifact{{Key: "my-artifact", Resolver: resolver}}

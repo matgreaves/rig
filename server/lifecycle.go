@@ -286,8 +286,12 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Args:        args,
 			TempDir:     sc.tempDir,
 			EnvDir:      sc.envDir,
+			InstanceID:  sc.instanceID,
 			Stdout:      &teeWriter{logWriter, "stdout"},
 			Stderr:      &teeWriter{logWriter, "stderr"},
+			BuildEnv: func(ingresses, egresses map[string]spec.Endpoint) map[string]string {
+				return BuildServiceEnv(sc.name, ingresses, egresses, sc.tempDir, sc.envDir)
+			},
 			Callback: func(ctx context.Context, name, callbackType string) error {
 				return dispatchCallback(ctx, sc, name, callbackType, true)
 			},
