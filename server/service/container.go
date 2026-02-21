@@ -32,6 +32,11 @@ type ContainerConfig struct {
 	Env map[string]string `json:"env,omitempty"`
 }
 
+// ContainerName returns the Docker container name for a service instance.
+func ContainerName(instanceID, serviceName string) string {
+	return fmt.Sprintf("rig-%s-%s", instanceID, serviceName)
+}
+
 // Container implements Type for the "container" service type.
 // It runs a Docker container with host-mapped ports.
 type Container struct{}
@@ -72,11 +77,10 @@ func (Container) Runner(params StartParams) run.Runner {
 	}
 
 	return run.Func(func(ctx context.Context) error {
-		cli, err := dockerutil.NewClient()
+		cli, err := dockerutil.Client()
 		if err != nil {
 			return fmt.Errorf("service %q: docker client: %w", params.ServiceName, err)
 		}
-		defer cli.Close()
 
 		// Verify Docker is reachable.
 		if _, err := cli.Ping(ctx); err != nil {
@@ -99,7 +103,7 @@ func (Container) Runner(params StartParams) run.Runner {
 		// Build port bindings: host port → container port.
 		portBindings, exposedPorts := buildPortBindings(params.Ingresses, params.Spec.Ingresses)
 
-		containerName := fmt.Sprintf("rig-%s-%s", params.InstanceID, params.ServiceName)
+		containerName := ContainerName(params.InstanceID, params.ServiceName)
 
 		config := &container.Config{
 			Image:        cfg.Image,
@@ -216,13 +220,22 @@ func dockerHostIP() string {
 // a container's network namespace:
 //   - Host → 0.0.0.0 (must listen on all interfaces for Docker port forwarding)
 //   - Port → ContainerPort if set (the port inside the container)
+//
+// Attributes that carried the original host or port values are updated to
+// match the adjusted values so that env vars derived from attributes (e.g.
+// PGHOST, PGPORT) are correct inside the container.
 func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string]spec.IngressSpec) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(ingresses))
 	for name, ep := range ingresses {
+		origHost := ep.Host
+		origPort := strconv.Itoa(ep.Port)
+
 		ep.Host = "0.0.0.0"
 		if is, ok := specs[name]; ok && is.ContainerPort != 0 {
 			ep.Port = is.ContainerPort
 		}
+
+		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, origPort, strconv.Itoa(ep.Port))
 		adjusted[name] = ep
 	}
 	return adjusted
@@ -230,14 +243,42 @@ func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string
 
 // adjustEgressEndpoints returns a copy of the egress endpoints with host
 // addresses replaced so containers can reach host services through Docker's
-// bridge network.
+// bridge network. Attributes that carried 127.0.0.1 are updated to match.
 func adjustEgressEndpoints(egresses map[string]spec.Endpoint, hostIP string) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(egresses))
 	for name, ep := range egresses {
+		origHost := ep.Host
 		ep.Host = strings.ReplaceAll(ep.Host, "127.0.0.1", hostIP)
+		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, "", "")
 		adjusted[name] = ep
 	}
 	return adjusted
+}
+
+// adjustAttrs returns a copy of attrs with values matching oldHost or oldPort
+// replaced by newHost or newPort respectively. If oldPort is empty, port
+// replacement is skipped.
+func adjustAttrs(attrs map[string]any, oldHost, newHost, oldPort, newPort string) map[string]any {
+	if len(attrs) == 0 {
+		return attrs
+	}
+	out := make(map[string]any, len(attrs))
+	for k, v := range attrs {
+		s := fmt.Sprintf("%v", v)
+		switch s {
+		case oldHost:
+			out[k] = newHost
+		case oldPort:
+			if oldPort != "" {
+				out[k] = newPort
+			} else {
+				out[k] = v
+			}
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // envMapToSlice converts a map of env vars to a slice of "KEY=VALUE" strings.

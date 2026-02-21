@@ -52,6 +52,7 @@ func startTestServer(t *testing.T) string {
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
+	reg.Register("postgres", service.Postgres{})
 
 	rigDir := filepath.Join(moduleRoot(t), ".rig")
 	s := server.NewServer(
@@ -317,6 +318,162 @@ func TestUp(t *testing.T) {
 			t.Errorf("nginx status: %d, want 200", resp.StatusCode)
 		}
 	})
+
+	t.Run("Postgres", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"db": rig.Postgres(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep := env.Endpoint("db")
+
+		// Verify TCP connectivity.
+		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		if err != nil {
+			t.Fatalf("postgres dial: %v", err)
+		}
+		conn.Close()
+
+		// Verify endpoint attributes.
+		if got := ep.Attr("PGDATABASE"); got != "db" {
+			t.Errorf("PGDATABASE = %q, want db", got)
+		}
+		if got := ep.Attr("PGUSER"); got != "postgres" {
+			t.Errorf("PGUSER = %q, want postgres", got)
+		}
+		if got := ep.Attr("PGPASSWORD"); got != "postgres" {
+			t.Errorf("PGPASSWORD = %q, want postgres", got)
+		}
+		if got := ep.Attr("PGHOST"); got != "127.0.0.1" {
+			t.Errorf("PGHOST = %q, want 127.0.0.1", got)
+		}
+		if got := ep.Attr("PGPORT"); got == "" {
+			t.Error("PGPORT is empty")
+		}
+	})
+
+	t.Run("PostgresInitSQL_BadSQL", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := rig.TryUp(t, rig.Services{
+			"db": rig.Postgres().InitSQL("INSERT INTO nonexistent_table VALUES (1)"),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+		if err == nil {
+			t.Fatal("expected Up to fail due to bad SQL")
+		}
+
+		t.Logf("captured failure: %s", err)
+	})
+
+	t.Run("PostgresInitSQL", func(t *testing.T) {
+		t.Parallel()
+
+		// Use a second InitSQL to verify the first one ran — inserting into
+		// the table created by the first statement proves both executed
+		// in order. A follow-up InitHook verifies from the client side.
+		var initHookRan bool
+
+		env := rig.Up(t, rig.Services{
+			"db": rig.Postgres().
+				InitSQL(
+					"CREATE TABLE test_init (id INT PRIMARY KEY, name TEXT NOT NULL)",
+					"INSERT INTO test_init VALUES (1, 'hello')",
+				).
+				InitHook(func(ctx context.Context, w rig.Wiring) error {
+					initHookRan = true
+					return nil
+				}),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		if !initHookRan {
+			t.Fatal("init hook was not called after InitSQL")
+		}
+
+		// Verify service is reachable.
+		ep := env.Endpoint("db")
+		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		if err != nil {
+			t.Fatalf("postgres dial: %v", err)
+		}
+		conn.Close()
+	})
+
+	t.Run("UserAPI", func(t *testing.T) {
+		t.Parallel()
+
+		root := moduleRoot(t)
+		env := rig.Up(t, rig.Services{
+			"db": rig.Postgres().InitSQL(
+				"CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL)",
+			),
+			"api": rig.Go(filepath.Join(root, "testdata", "services", "userapi")).
+				Egress("db"),
+		}, rig.WithServer(serverURL))
+
+		api := httpx.New(env.Endpoint("api"))
+
+		// Create a user.
+		resp, err := api.Post("/users", "application/json",
+			strings.NewReader(`{"name":"Alice"}`))
+		if err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create user: status %d, want 201", resp.StatusCode)
+		}
+		var created user
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatalf("decode created user: %v", err)
+		}
+		if created.Name != "Alice" || created.ID == 0 {
+			t.Fatalf("created user = %+v, want name=Alice id>0", created)
+		}
+
+		// Read the user back.
+		resp2, err := api.Get(fmt.Sprintf("/users/%d", created.ID))
+		if err != nil {
+			t.Fatalf("get user: %v", err)
+		}
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			t.Fatalf("get user: status %d, want 200", resp2.StatusCode)
+		}
+		var fetched user
+		if err := json.NewDecoder(resp2.Body).Decode(&fetched); err != nil {
+			t.Fatalf("decode fetched user: %v", err)
+		}
+		if fetched != created {
+			t.Fatalf("fetched user = %+v, want %+v", fetched, created)
+		}
+
+		// Delete the user.
+		req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("/users/%d", created.ID), nil)
+		resp3, err := api.Do(req)
+		if err != nil {
+			t.Fatalf("delete user: %v", err)
+		}
+		resp3.Body.Close()
+		if resp3.StatusCode != http.StatusNoContent {
+			t.Fatalf("delete user: status %d, want 204", resp3.StatusCode)
+		}
+
+		// Confirm it's gone.
+		resp4, err := api.Get(fmt.Sprintf("/users/%d", created.ID))
+		if err != nil {
+			t.Fatalf("get deleted user: %v", err)
+		}
+		resp4.Body.Close()
+		if resp4.StatusCode != http.StatusNotFound {
+			t.Fatalf("get deleted user: status %d, want 404", resp4.StatusCode)
+		}
+	})
+}
+
+type user struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 }
 
 // TestWrappedTB verifies that env.T captures assertion failures as test.note

@@ -1,18 +1,35 @@
-// Package dockerutil provides shared Docker client creation with automatic
-// socket discovery for common Docker Desktop installations.
+// Package dockerutil provides a shared Docker client with automatic socket
+// discovery for common Docker Desktop installations.
 package dockerutil
 
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/docker/docker/client"
 )
 
-// NewClient creates a Docker client. If DOCKER_HOST is not set, it probes
+var (
+	sharedClient *client.Client
+	clientOnce   sync.Once
+	clientErr    error
+)
+
+// Client returns a process-wide shared Docker client. The client is
+// thread-safe and reuses connections to the Docker daemon. Callers must
+// NOT call Close on the returned client.
+func Client() (*client.Client, error) {
+	clientOnce.Do(func() {
+		sharedClient, clientErr = newClient()
+	})
+	return sharedClient, clientErr
+}
+
+// newClient creates a Docker client. If DOCKER_HOST is not set, it probes
 // common socket paths so the SDK finds Docker Desktop on macOS without
 // extra configuration.
-func NewClient() (*client.Client, error) {
+func newClient() (*client.Client, error) {
 	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
 
 	// If DOCKER_HOST is not set, probe common socket paths and pass the

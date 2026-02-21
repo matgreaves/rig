@@ -153,10 +153,10 @@ func TestFullEnvironmentRoundTrip(t *testing.T) {
 					"default": {Protocol: spec.TCP, ContainerPort: 5432},
 				},
 				Hooks: &spec.Hooks{
-					Init: &spec.HookSpec{
+					Init: []*spec.HookSpec{{
 						Type:   "initdb",
 						Config: json.RawMessage(`{"migrations":"./testdata/migrations"}`),
-					},
+					}},
 				},
 			},
 			"order-service": {
@@ -173,10 +173,10 @@ func TestFullEnvironmentRoundTrip(t *testing.T) {
 					"database": {Service: "postgres", Ingress: "default"},
 				},
 				Hooks: &spec.Hooks{
-					Prestart: &spec.HookSpec{
+					Prestart: []*spec.HookSpec{{
 						Type:       "client_func",
 						ClientFunc: &spec.ClientFuncSpec{Name: "write-order-config"},
-					},
+					}},
 				},
 			},
 		},
@@ -207,7 +207,7 @@ func TestFullEnvironmentRoundTrip(t *testing.T) {
 	if pg.Ingresses["default"].ContainerPort != 5432 {
 		t.Errorf("postgres container_port: got %d", pg.Ingresses["default"].ContainerPort)
 	}
-	if pg.Hooks == nil || pg.Hooks.Init == nil || pg.Hooks.Init.Type != "initdb" {
+	if pg.Hooks == nil || len(pg.Hooks.Init) == 0 || pg.Hooks.Init[0].Type != "initdb" {
 		t.Error("postgres init hook lost in round-trip")
 	}
 
@@ -222,11 +222,11 @@ func TestFullEnvironmentRoundTrip(t *testing.T) {
 	if os.Egresses["database"].Service != "postgres" {
 		t.Error("order-service egress lost in round-trip")
 	}
-	if os.Hooks == nil || os.Hooks.Prestart == nil || os.Hooks.Prestart.ClientFunc == nil {
+	if os.Hooks == nil || len(os.Hooks.Prestart) == 0 || os.Hooks.Prestart[0].ClientFunc == nil {
 		t.Error("order-service prestart hook lost in round-trip")
 	}
-	if os.Hooks.Prestart.ClientFunc.Name != "write-order-config" {
-		t.Errorf("client_func name: got %q", os.Hooks.Prestart.ClientFunc.Name)
+	if os.Hooks.Prestart[0].ClientFunc.Name != "write-order-config" {
+		t.Errorf("client_func name: got %q", os.Hooks.Prestart[0].ClientFunc.Name)
 	}
 }
 
@@ -239,10 +239,10 @@ func TestEnvironmentFromJSON(t *testing.T) {
 				"type": "postgres",
 				"config": {"database": "orders", "user": "test", "password": "test"},
 				"hooks": {
-					"init": {
+					"init": [{
 						"type": "initdb",
 						"config": {"migrations": "./testdata/migrations"}
-					}
+					}]
 				}
 			},
 			"order-service": {
@@ -259,10 +259,10 @@ func TestEnvironmentFromJSON(t *testing.T) {
 					"database": {"service": "postgres"}
 				},
 				"hooks": {
-					"prestart": {
+					"prestart": [{
 						"type": "client_func",
 						"client_func": {"name": "write-order-config"}
-					}
+					}]
 				}
 			}
 		}

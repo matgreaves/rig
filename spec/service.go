@@ -28,6 +28,6 @@ type Service struct {
 
 // Hooks holds the optional prestart and init hooks for a service.
 type Hooks struct {
-	Prestart *HookSpec `json:"prestart,omitempty"`
-	Init     *HookSpec `json:"init,omitempty"`
+	Prestart []*HookSpec `json:"prestart,omitempty"`
+	Init     []*HookSpec `json:"init,omitempty"`
 }

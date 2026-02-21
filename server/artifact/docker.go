@@ -54,11 +54,10 @@ func (d DockerPull) Resolve(ctx context.Context, outputDir string) (Output, erro
 		return Output{}, fmt.Errorf("create output dir: %w", err)
 	}
 
-	cli, err := dockerutil.NewClient()
+	cli, err := dockerutil.Client()
 	if err != nil {
 		return Output{}, fmt.Errorf("docker client: %w", err)
 	}
-	defer cli.Close()
 
 	rc, err := cli.ImagePull(ctx, d.Image, image.PullOptions{})
 	if err != nil {
@@ -104,11 +103,10 @@ func (d DockerPull) Valid(output Output) bool {
 	if imageID == "" {
 		return false
 	}
-	cli, err := dockerutil.NewClient()
+	cli, err := dockerutil.Client()
 	if err != nil {
 		return false
 	}
-	defer cli.Close()
 
 	_, _, err = cli.ImageInspectWithRaw(context.Background(), imageID)
 	return err == nil

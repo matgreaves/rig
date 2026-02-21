@@ -600,10 +600,11 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 		}
 	}
 
-	// Best-effort — the JSONL file is the primary artifact.
-	os.WriteFile(base+".log", []byte(b.String()+"\n"), 0o644)
+	// Write human-readable timeline — this is what we surface to users.
+	logPath := base + ".log"
+	os.WriteFile(logPath, []byte(b.String()+"\n"), 0o644)
 
-	return jsonlPath, nil
+	return logPath, nil
 }
 
 // pruneOldLogs removes .jsonl and .log files older than maxAge from dir.
