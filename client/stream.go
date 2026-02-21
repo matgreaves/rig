@@ -270,6 +270,8 @@ func streamUntilReady(
 }
 
 // handleEvent processes a single SSE event. Returns (result, done, error).
+// Failures from service.failed and artifact.failed events are accumulated
+// and included in the environment.down error.
 func handleEvent(
 	ctx context.Context,
 	serverURL string,
