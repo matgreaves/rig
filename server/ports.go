@@ -11,13 +11,15 @@ import (
 // handing out a port that is already in use by another active environment.
 type PortAllocator struct {
 	mu        sync.Mutex
-	allocated map[int]string // port → instance ID
+	allocated map[int]string   // port → instance ID
+	byInstance map[string][]int // instance ID → ports (reverse index for O(k) release)
 }
 
 // NewPortAllocator creates an empty port allocator.
 func NewPortAllocator() *PortAllocator {
 	return &PortAllocator{
-		allocated: make(map[int]string),
+		allocated:  make(map[int]string),
+		byInstance: make(map[string][]int),
 	}
 }
 
@@ -70,6 +72,7 @@ func (a *PortAllocator) Allocate(instanceID string, n int) ([]int, error) {
 	for _, port := range ports {
 		a.allocated[port] = instanceID
 	}
+	a.byInstance[instanceID] = append(a.byInstance[instanceID], ports...)
 
 	return ports, nil
 }
@@ -79,11 +82,10 @@ func (a *PortAllocator) Release(instanceID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	for port, id := range a.allocated {
-		if id == instanceID {
-			delete(a.allocated, port)
-		}
+	for _, port := range a.byInstance[instanceID] {
+		delete(a.allocated, port)
 	}
+	delete(a.byInstance, instanceID)
 }
 
 // Allocated returns the number of currently tracked ports.

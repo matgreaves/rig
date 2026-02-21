@@ -291,7 +291,7 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 	// If a service crash already brought it down, destroying doesn't apply —
 	// nobody requested teardown, it just died.
 	alreadyDown := false
-	for _, e := range inst.log.Events() {
+	for _, e := range inst.log.LifecycleEvents() {
 		if e.Type == EventEnvironmentDown {
 			alreadyDown = true
 			break
@@ -340,7 +340,7 @@ func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) (*envInstan
 // snapshot of the environment: resolved ingress/egress endpoints and service
 // statuses.
 func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
-	events := inst.log.Events()
+	events := inst.log.LifecycleEvents()
 
 	services := make(map[string]spec.ResolvedService, len(inst.spec.Services))
 	for name := range inst.spec.Services {
