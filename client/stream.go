@@ -16,16 +16,16 @@ import (
 // wireEvent mirrors the server's Event type for JSON decoding from the SSE
 // stream. Only the fields the SDK needs are included.
 type wireEvent struct {
-	Type       string                                `json:"type"`
-	Service    string                                `json:"service,omitempty"`
-	Ingress    string                                `json:"ingress,omitempty"`
-	Artifact   string                                `json:"artifact,omitempty"`
-	Error      string                                `json:"error,omitempty"`
-	Log        *wireLogEntry                         `json:"log,omitempty"`
-	Callback   *wireCallbackRequest                  `json:"callback,omitempty"`
-	Request    *wireRequestInfo                      `json:"request,omitempty"`
-	Connection *wireConnectionInfo                   `json:"connection,omitempty"`
-	Ingresses  map[string]map[string]wireEndpoint    `json:"ingresses,omitempty"`
+	Type       string                             `json:"type"`
+	Service    string                             `json:"service,omitempty"`
+	Ingress    string                             `json:"ingress,omitempty"`
+	Artifact   string                             `json:"artifact,omitempty"`
+	Error      string                             `json:"error,omitempty"`
+	Log        *wireLogEntry                      `json:"log,omitempty"`
+	Callback   *wireCallbackRequest               `json:"callback,omitempty"`
+	Request    *wireRequestInfo                   `json:"request,omitempty"`
+	Connection *wireConnectionInfo                `json:"connection,omitempty"`
+	Ingresses  map[string]map[string]wireEndpoint `json:"ingresses,omitempty"`
 }
 
 type wireRequestInfo struct {
@@ -58,7 +58,7 @@ type wireCallbackRequest struct {
 	RequestID string             `json:"request_id"`
 	Name      string             `json:"name"`
 	Type      string             `json:"type"`
-	Wiring    *wireWiringContext  `json:"wiring,omitempty"`
+	Wiring    *wireWiringContext `json:"wiring,omitempty"`
 }
 
 type wireWiringContext struct {

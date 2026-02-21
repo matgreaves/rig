@@ -51,13 +51,14 @@ func startTestServer(t *testing.T) string {
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
+	reg.Register("container", service.Container{})
 
 	rigDir := filepath.Join(moduleRoot(t), ".rig")
 	s := server.NewServer(
 		server.NewPortAllocator(),
 		reg,
 		t.TempDir(),
-		0,      // idle timeout disabled
+		0, // idle timeout disabled
 		rigDir,
 	)
 	ts := httptest.NewServer(s)
@@ -298,6 +299,24 @@ func TestUp(t *testing.T) {
 			t.Errorf("health: %d, want 200", resp.StatusCode)
 		}
 	})
+
+	t.Run("Container", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"nginx": rig.Container("nginx:alpine").Port(80),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+		ep := env.Endpoint("nginx")
+		resp, err := http.Get("http://" + ep.Addr() + "/")
+		if err != nil {
+			t.Fatalf("nginx request: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("nginx status: %d, want 200", resp.StatusCode)
+		}
+	})
 }
 
 // TestWrappedTB verifies that env.T captures assertion failures as test.note
@@ -499,10 +518,10 @@ func TestObserve(t *testing.T) {
 		Type    string `json:"type"`
 		Request *struct {
 			Source     string `json:"source"`
-			Target    string `json:"target"`
-			Method    string `json:"method"`
-			Path      string `json:"path"`
-			StatusCode int   `json:"status_code"`
+			Target     string `json:"target"`
+			Method     string `json:"method"`
+			Path       string `json:"path"`
+			StatusCode int    `json:"status_code"`
 		} `json:"request,omitempty"`
 		Endpoint *struct {
 			Port int `json:"port"`
@@ -590,7 +609,7 @@ func TestObserveTCP(t *testing.T) {
 	var events []struct {
 		Type       string `json:"type"`
 		Connection *struct {
-			Source   string `json:"source"`
+			Source  string `json:"source"`
 			Target  string `json:"target"`
 			BytesIn int64  `json:"bytes_in"`
 		} `json:"connection,omitempty"`

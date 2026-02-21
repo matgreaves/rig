@@ -84,12 +84,9 @@ func validateService(name string, svc spec.Service, allServices map[string]spec.
 			))
 		}
 
-		if svc.Type == "container" && ingress.ContainerPort == 0 {
-			errs = append(errs, fmt.Sprintf(
-				"service %q, ingress %q: container_port is required for container-type services",
-				name, ingressName,
-			))
-		}
+		// ContainerPort is optional for container types: if omitted, the
+		// host-allocated port is used as the container port (rig-native
+		// apps that read RIG_DEFAULT_PORT).
 	}
 
 	// Validate egresses (sorted for deterministic output).

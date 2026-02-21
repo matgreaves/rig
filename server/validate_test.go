@@ -81,17 +81,21 @@ func TestValidateEnvironment_InvalidProtocol(t *testing.T) {
 	assertContainsError(t, errs, `invalid protocol "websocket"`)
 }
 
-func TestValidateEnvironment_ContainerPortRequired(t *testing.T) {
+func TestValidateEnvironment_ContainerPortOptional(t *testing.T) {
+	// ContainerPort 0 is valid for container types — rig-native apps
+	// that read RIG_DEFAULT_PORT don't need an explicit container port.
 	env := validEnv()
 	env.Services["db"] = spec.Service{
 		Type: "container",
 		Ingresses: map[string]spec.IngressSpec{
-			"default": {Protocol: spec.TCP}, // missing ContainerPort
+			"default": {Protocol: spec.TCP}, // no ContainerPort — valid
 		},
 	}
 
 	errs := server.ValidateEnvironment(&env)
-	assertContainsError(t, errs, "container_port is required")
+	if len(errs) > 0 {
+		t.Errorf("unexpected validation errors: %v", errs)
+	}
 }
 
 func TestValidateEnvironment_ContainerPortPresent(t *testing.T) {

@@ -40,6 +40,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return processToSpec(d, handlers)
 	case *FuncDef:
 		return funcToSpec(d, handlers, startHandlers)
+	case *ContainerDef:
+		return containerToSpec(d, handlers)
 	case *CustomDef:
 		return customToSpec(d, handlers)
 	default:
@@ -105,6 +107,33 @@ func funcToSpec(d *FuncDef, handlers map[string]hookFunc, startHandlers map[stri
 
 	return spec.Service{
 		Type:      "client",
+		Config:    cfg,
+		Ingresses: ingressesToSpec(d.ingresses),
+		Egresses:  egressesToSpec(d.egresses),
+		Hooks:     hooks,
+	}, nil
+}
+
+func containerToSpec(d *ContainerDef, handlers map[string]hookFunc) (spec.Service, error) {
+	cfgMap := map[string]any{"image": d.image}
+	if len(d.cmd) > 0 {
+		cfgMap["cmd"] = d.cmd
+	}
+	if len(d.env) > 0 {
+		cfgMap["env"] = d.env
+	}
+	cfg, err := json.Marshal(cfgMap)
+	if err != nil {
+		return spec.Service{}, fmt.Errorf("marshal container config: %w", err)
+	}
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return spec.Service{}, err
+	}
+
+	return spec.Service{
+		Type:      "container",
 		Config:    cfg,
 		Ingresses: ingressesToSpec(d.ingresses),
 		Egresses:  egressesToSpec(d.egresses),

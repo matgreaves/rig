@@ -23,6 +23,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
+	reg.Register("container", service.Container{})
 
 	s := server.NewServer(
 		server.NewPortAllocator(),
@@ -495,6 +496,8 @@ func TestServer(t *testing.T) {
 		// Two services: echo (healthy) and broken (crashes immediately).
 		// Both are independent — no egress dependency. Verify both get
 		// stopped when one crashes (the orchestrator tears down everything).
+		// broken has an ingress so the ready check runs and fails when
+		// the process exits — this prevents environment.up from firing.
 		envSpec := map[string]any{
 			"name": "test-multi-crash",
 			"services": map[string]any{
@@ -508,6 +511,9 @@ func TestServer(t *testing.T) {
 				"broken": map[string]any{
 					"type":   "process",
 					"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
 				},
 			},
 		}
