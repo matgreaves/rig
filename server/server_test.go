@@ -403,6 +403,20 @@ func TestServer(t *testing.T) {
 			t.Errorf("service.failed error = %q, want it to contain 'exit status'", failed.Error)
 		}
 
+		// environment.failing must appear with the root cause.
+		failing, ok := findEvent(all, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentFailing
+		})
+		if !ok {
+			t.Fatal("no environment.failing event")
+		}
+		if !strings.Contains(failing.Error, "broken") {
+			t.Errorf("environment.failing error = %q, want it to mention service name", failing.Error)
+		}
+		if failing.Service != "broken" {
+			t.Errorf("environment.failing service = %q, want %q", failing.Service, "broken")
+		}
+
 		// service.stopped must appear after the crash.
 		if !hasEvent(all, func(e server.Event) bool {
 			return e.Type == server.EventServiceStopped && e.Service == "broken"

@@ -57,8 +57,14 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 		runWithLifecycle(sc),
 	}
 	// Wrap to emit stopping/stopped events during teardown.
+	// Returns the stripped domain error (no run.Sequence/run.Group noise)
+	// so callers never need to strip again.
 	return run.Func(func(ctx context.Context) error {
 		err := inner.Run(ctx)
+		var domainErr string
+		if err != nil {
+			domainErr = stripRunPrefixes(err.Error())
+		}
 		if ctx.Err() != nil {
 			// Context cancelled — service is stopping due to teardown.
 			sc.log.Publish(Event{
@@ -67,12 +73,12 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 				Service:     sc.name,
 			})
 		} else if err != nil {
-			// Service crashed — mark as failed before stopped.
+			// Service failed — mark as failed before stopped.
 			sc.log.Publish(Event{
 				Type:        EventServiceFailed,
 				Environment: sc.envName,
 				Service:     sc.name,
-				Error:       stripRunPrefixes(err.Error()),
+				Error:       domainErr,
 			})
 		}
 		sc.log.Publish(Event{
@@ -80,7 +86,10 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 			Environment: sc.envName,
 			Service:     sc.name,
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("%s", domainErr)
+		}
+		return nil
 	})
 }
 
@@ -94,7 +103,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 
 		allocated, err := ports.Allocate(sc.instanceID, n)
 		if err != nil {
-			return fmt.Errorf("service %q: allocate ports: %w", sc.name, err)
+			return fmt.Errorf("allocate ports: %w", err)
 		}
 
 		// Sort ingress names for deterministic port assignment.
@@ -116,7 +125,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			Ports:       portMap,
 		})
 		if err != nil {
-			return fmt.Errorf("service %q: publish: %w", sc.name, err)
+			return fmt.Errorf("publish: %w", err)
 		}
 
 		sc.ingresses = endpoints
@@ -137,7 +146,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 		if sc.observe {
 			proxyPorts, err := ports.Allocate(sc.instanceID, len(endpoints))
 			if err != nil {
-				return fmt.Errorf("service %q: allocate external proxy ports: %w", sc.name, err)
+				return fmt.Errorf("allocate external proxy ports: %w", err)
 			}
 			i := 0
 			for ingressName, ep := range endpoints {
@@ -188,8 +197,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 					e.Service == targetService
 			})
 			if err != nil {
-				return fmt.Errorf("service %q: waiting for egress %q (service %q): %w",
-					sc.name, egressName, targetService, err)
+				return fmt.Errorf("waiting for egress %q (service %q): %w",
+					egressName, targetService, err)
 			}
 
 			// Find the published ingress endpoint for the target.
@@ -200,8 +209,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 					e.Ingress == targetIngress
 			})
 			if err != nil {
-				return fmt.Errorf("service %q: finding endpoint for egress %q: %w",
-					sc.name, egressName, err)
+				return fmt.Errorf("finding endpoint for egress %q: %w",
+					egressName, err)
 			}
 
 			realEndpoint := *ev.Endpoint
@@ -210,8 +219,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 				// Create an egress proxy so the service talks through the proxy.
 				proxyPorts, err := ports.Allocate(sc.instanceID, 1)
 				if err != nil {
-					return fmt.Errorf("service %q: allocate egress proxy port for %q: %w",
-						sc.name, egressName, err)
+					return fmt.Errorf("allocate egress proxy port for %q: %w",
+						egressName, err)
 				}
 				fwd := &proxy.Forwarder{
 					ListenPort: proxyPorts[0],
@@ -363,7 +372,7 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 				})
 			}
 			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec, onFailure); err != nil {
-				return fmt.Errorf("service %q, ingress %q: %w", sc.name, ingressName, err)
+				return fmt.Errorf("ingress %q: %w", ingressName, err)
 			}
 		}
 		return nil

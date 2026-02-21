@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/matgreaves/rig/server/artifact"
 	"github.com/matgreaves/rig/server/service"
@@ -25,16 +26,18 @@ type Orchestrator struct {
 }
 
 // Orchestrate builds a run.Runner that manages the full lifecycle of the
-// given environment. The runner is a run.Sequence of two phases:
+// given environment. The runner executes two phases sequentially:
 //
 //  1. Artifact phase: resolves all required artifacts (compiled binaries, etc.)
 //     in parallel, using a content-addressable cache.
-//  2. Service phase: starts all services concurrently (run.Group). Dependency
-//     ordering emerges from services blocking on the event log until their
-//     egress targets are ready.
+//  2. Service phase: starts all services concurrently. Dependency ordering
+//     emerges from services blocking on the event log until their egress
+//     targets are ready. On first failure, the server cancels all remaining
+//     services and emits environment.failing with the root cause.
 //
-// The results map is safe to share because run.Sequence guarantees sequential
-// execution: the artifact phase writes to it, the service phase reads from it.
+// If either phase fails, the runner emits environment.failing with the root
+// cause before returning. The results map is safe to share because the
+// artifact phase completes before the service phase begins.
 func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, error) {
 	// Generate instance ID.
 	instanceID := generateID()
@@ -69,7 +72,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	}
 
 	// results is populated by artifactPhase and read by servicePhase.
-	// Safe because run.Sequence is sequential.
+	// Safe because the two phases run sequentially.
 	results := make(map[string]artifact.Output)
 
 	cache := artifact.NewCache(o.cacheDir())
@@ -98,7 +101,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	artifactPhase := run.Func(func(ctx context.Context) error {
 		resolved, err := artifact.Resolve(ctx, allArtifacts, cache, emit)
 		if err != nil {
-			return fmt.Errorf("artifact phase: %w", err)
+			return err
 		}
 		for k, v := range resolved {
 			results[k] = v
@@ -106,8 +109,23 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 		return nil
 	})
 
+	// failedService is set by servicePhase to the name of the service
+	// that caused the environment to fail. Read by lifecycle wrapper
+	// to populate the structured Service field on environment.failing.
+	var failedService string
+
 	servicePhase := run.Func(func(ctx context.Context) error {
-		group := run.Group{}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		type serviceErr struct {
+			name string
+			err  error
+		}
+
+		var wg sync.WaitGroup
+		errs := make(chan serviceErr, len(serviceNames))
+
 		for _, name := range serviceNames {
 			svc := env.Services[name]
 			svcType, err := o.Registry.Get(svc.Type)
@@ -128,19 +146,65 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 				observe:    env.Observe,
 			}
 
-			group[name] = serviceLifecycle(sc, o.Ports)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := serviceLifecycle(sc, o.Ports).Run(ctx); err != nil {
+					errs <- serviceErr{name: sc.name, err: err}
+				}
+			}()
 		}
-		return group.Run(ctx)
+
+		// Close errs channel when all goroutines finish.
+		go func() {
+			wg.Wait()
+			close(errs)
+		}()
+
+		var cause error
+		for e := range errs {
+			if cause == nil {
+				failedService = e.name
+				cause = fmt.Errorf("service %q: %s", e.name, e.err)
+				cancel() // tear down all other services
+			}
+			// Subsequent errors are from services torn down by cancel —
+			// only the first (root cause) is reported.
+		}
+		return cause
 	})
 
 	lifecycle := run.Func(func(ctx context.Context) error {
-		err := run.Sequence{artifactPhase, servicePhase}.Run(ctx)
-		// Clean up temp dirs on graceful exit and cancel the onexit backup.
-		os.RemoveAll(envDir)
-		if cancelTempCleanup != nil {
-			cancelTempCleanup()
+		// Clean up temp dirs when the lifecycle exits, regardless of outcome.
+		defer func() {
+			os.RemoveAll(envDir)
+			if cancelTempCleanup != nil {
+				cancelTempCleanup()
+			}
+		}()
+
+		if err := artifactPhase.Run(ctx); err != nil {
+			if ctx.Err() == nil {
+				o.Log.Publish(Event{
+					Type:        EventEnvironmentFailing,
+					Environment: env.Name,
+					Error:       err.Error(),
+				})
+			}
+			return err
 		}
-		return err
+		if err := servicePhase.Run(ctx); err != nil {
+			if ctx.Err() == nil {
+				o.Log.Publish(Event{
+					Type:        EventEnvironmentFailing,
+					Environment: env.Name,
+					Service:     failedService,
+					Error:       err.Error(),
+				})
+			}
+			return err
+		}
+		return nil
 	})
 
 	return lifecycle, instanceID, nil

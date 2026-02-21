@@ -37,6 +37,7 @@ const (
 	EventCallbackResponse EventType = "callback.response"
 
 	// Environment lifecycle.
+	EventEnvironmentFailing    EventType = "environment.failing"
 	EventEnvironmentDestroying EventType = "environment.destroying"
 	EventEnvironmentUp         EventType = "environment.up"
 	EventEnvironmentDown       EventType = "environment.down"

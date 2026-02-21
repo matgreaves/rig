@@ -469,6 +469,82 @@ func TestUp(t *testing.T) {
 			t.Fatalf("get deleted user: status %d, want 404", resp4.StatusCode)
 		}
 	})
+
+	t.Run("InitHookFailure", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := rig.TryUp(t, rig.Services{
+			"echo": rig.Func(echo.Run).
+				InitHook(func(ctx context.Context, w rig.Wiring) error {
+					return fmt.Errorf("deliberate init failure")
+				}),
+		}, rig.WithServer(serverURL))
+		if err == nil {
+			t.Fatal("expected Up to fail due to init hook error")
+		}
+		if !strings.Contains(err.Error(), "deliberate init failure") {
+			t.Errorf("error does not mention hook failure: %v", err)
+		}
+	})
+
+	t.Run("PrestartHookFailure", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := rig.TryUp(t, rig.Services{
+			"db": rig.Func(echo.Run),
+			"api": rig.Func(echo.Run).
+				Egress("db").
+				PrestartHook(func(ctx context.Context, w rig.Wiring) error {
+					return fmt.Errorf("deliberate prestart failure")
+				}),
+		}, rig.WithServer(serverURL))
+		if err == nil {
+			t.Fatal("expected Up to fail due to prestart hook error")
+		}
+		if !strings.Contains(err.Error(), "deliberate prestart failure") {
+			t.Errorf("error does not mention hook failure: %v", err)
+		}
+	})
+
+	t.Run("StartupTimeout", func(t *testing.T) {
+		t.Parallel()
+
+		// A Func that blocks without listening — the health check will
+		// never pass, so Up should fail when the timeout expires.
+		start := time.Now()
+		_, err := rig.TryUp(t, rig.Services{
+			"stuck": rig.Func(func(ctx context.Context) error {
+				<-ctx.Done()
+				return nil
+			}),
+		}, rig.WithServer(serverURL), rig.WithTimeout(3*time.Second))
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected Up to fail due to timeout")
+		}
+		// Should fail around 3s, not hang.
+		if elapsed > 10*time.Second {
+			t.Errorf("timeout took too long: %v (want ~3s)", elapsed)
+		}
+	})
+
+	t.Run("ServiceCrash", func(t *testing.T) {
+		t.Parallel()
+
+		// The fail service exits immediately with an error. The
+		// environment should fail with a clear message.
+		root := moduleRoot(t)
+		_, err := rig.TryUp(t, rig.Services{
+			"crasher": rig.Go(filepath.Join(root, "testdata", "services", "fail")),
+		}, rig.WithServer(serverURL))
+		if err == nil {
+			t.Fatal("expected Up to fail due to service crash")
+		}
+		if !strings.Contains(err.Error(), "crasher") {
+			t.Errorf("error does not mention service name: %v", err)
+		}
+	})
 }
 
 type user struct {
