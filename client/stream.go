@@ -8,10 +8,127 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"testing"
+	"time"
 
 	"github.com/matgreaves/rig/connect"
 )
+
+const logTailLines = 10
+
+// streamState tracks lifecycle events and service log output during
+// streaming so that on failure we can produce a useful diagnostic
+// without requiring the user to open the event log file.
+type streamState struct {
+	start    time.Time
+	failures []string
+	timeline []string            // pre-formatted timeline lines
+	logTail  map[string][]string // last N log lines per service
+	failed   map[string]bool     // services that failed (log tail gets inlined)
+	trigger  int                 // index of environment.failing in timeline, -1 if not set
+}
+
+func newStreamState() *streamState {
+	return &streamState{
+		start:   time.Now(),
+		logTail: make(map[string][]string),
+		failed:  make(map[string]bool),
+		trigger: -1,
+	}
+}
+
+// recordEvent formats a lifecycle event and appends it to the timeline.
+// Log events are buffered separately per service.
+func (s *streamState) recordEvent(ev wireEvent) {
+	elapsed := time.Since(s.start).Seconds()
+
+	switch ev.Type {
+	case "service.log":
+		if ev.Log == nil {
+			return
+		}
+		for _, line := range strings.Split(strings.TrimRight(ev.Log.Data, "\n"), "\n") {
+			tail := s.logTail[ev.Service]
+			if len(tail) >= logTailLines {
+				tail = tail[1:]
+			}
+			s.logTail[ev.Service] = append(tail, line)
+		}
+		return
+
+	case "callback.request", "callback.response",
+		"proxy.request", "proxy.connection",
+		"health.check_failed": // transient polling failures are noise
+		return
+	}
+
+	// Format the timeline entry.
+	var label string
+	switch ev.Type {
+	case "artifact.started", "artifact.cached", "artifact.completed", "artifact.failed":
+		label = ev.Artifact
+	default:
+		label = ev.Service
+	}
+
+	line := fmt.Sprintf("  %5.2fs  %-22s %s", elapsed, ev.Type, label)
+	if ev.Error != "" {
+		line += "    " + ev.Error
+	}
+	if ev.Type == "environment.failing" {
+		s.trigger = len(s.timeline) // mark current position as trigger
+	}
+	s.timeline = append(s.timeline, line)
+
+	// On service.failed, inline the log tail right after the timeline entry.
+	if ev.Type == "service.failed" {
+		s.failed[ev.Service] = true
+		for _, logLine := range s.logTail[ev.Service] {
+			s.timeline = append(s.timeline, "         | "+logLine)
+		}
+	}
+}
+
+// contextEvents is the number of lifecycle events shown before the trigger.
+const contextEvents = 5
+
+// formatFailure produces the error message shown to the user on environment.down.
+// It shows the failure cause, the event that triggered shutdown, its inlined
+// service logs, and a few preceding lifecycle events for context.
+func (s *streamState) formatFailure() string {
+	var b strings.Builder
+	b.WriteString("environment failed")
+	if len(s.failures) > 0 {
+		b.WriteString(":\n  ")
+		b.WriteString(strings.Join(s.failures, "\n  "))
+	}
+	if len(s.timeline) > 0 {
+		trigger := s.trigger
+		if trigger == -1 {
+			// No environment.failing seen; show last few entries.
+			trigger = len(s.timeline) - 1
+		}
+
+		// Walk backwards from trigger over lifecycle entries (skip log lines).
+		context := 0
+		start := trigger
+		for start > 0 && context < contextEvents {
+			start--
+			if !strings.HasPrefix(s.timeline[start], "         |") {
+				context++
+			}
+		}
+
+		// Walk forwards from trigger past its inlined log lines.
+		end := trigger + 1
+		for end < len(s.timeline) && strings.HasPrefix(s.timeline[end], "         |") {
+			end++
+		}
+
+		b.WriteString("\n\n")
+		b.WriteString(strings.Join(s.timeline[start:end], "\n"))
+	}
+	return b.String()
+}
 
 // wireEvent mirrors the server's Event type for JSON decoding from the SSE
 // stream. Only the fields the SDK needs are included.
@@ -82,7 +199,6 @@ type wireEndpoint struct {
 // startHandlers maps start callback names to functions launched asynchronously.
 func streamUntilReady(
 	ctx context.Context,
-	t testing.TB,
 	serverURL string,
 	envID string,
 	handlers map[string]hookFunc,
@@ -108,6 +224,7 @@ func streamUntilReady(
 
 	scanner := bufio.NewScanner(resp.Body)
 	var eventType, data string
+	state := newStreamState()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -131,7 +248,9 @@ func streamUntilReady(
 				continue
 			}
 
-			result, done, err := handleEvent(ctx, t, serverURL, envID, ev, handlers, funcCtx, startHandlers)
+			state.recordEvent(ev)
+
+			result, done, err := handleEvent(ctx, serverURL, envID, ev, handlers, funcCtx, startHandlers, state)
 			if err != nil {
 				return nil, err
 			}
@@ -153,13 +272,13 @@ func streamUntilReady(
 // handleEvent processes a single SSE event. Returns (result, done, error).
 func handleEvent(
 	ctx context.Context,
-	t testing.TB,
 	serverURL string,
 	envID string,
 	ev wireEvent,
 	handlers map[string]hookFunc,
 	funcCtx context.Context,
 	startHandlers map[string]startFunc,
+	state *streamState,
 ) (*Environment, bool, error) {
 	switch ev.Type {
 	case "callback.request":
@@ -181,13 +300,10 @@ func handleEvent(
 		return resolved, true, nil
 
 	case "environment.down":
-		return nil, false, fmt.Errorf("environment failed (received environment.down without environment.up)")
+		return nil, false, fmt.Errorf("%s", state.formatFailure())
 
-	case "service.failed":
-		t.Logf("rig: service %q failed: %s", ev.Service, ev.Error)
-
-	case "artifact.failed":
-		t.Logf("rig: artifact %q failed: %s", ev.Artifact, ev.Error)
+	case "environment.failing":
+		state.failures = append(state.failures, ev.Error)
 	}
 
 	return nil, false, nil

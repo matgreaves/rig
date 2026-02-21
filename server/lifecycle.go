@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"github.com/matgreaves/rig/server/artifact"
@@ -56,8 +57,14 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 		runWithLifecycle(sc),
 	}
 	// Wrap to emit stopping/stopped events during teardown.
+	// Returns the stripped domain error (no run.Sequence/run.Group noise)
+	// so callers never need to strip again.
 	return run.Func(func(ctx context.Context) error {
 		err := inner.Run(ctx)
+		var domainErr string
+		if err != nil {
+			domainErr = stripRunPrefixes(err.Error())
+		}
 		if ctx.Err() != nil {
 			// Context cancelled — service is stopping due to teardown.
 			sc.log.Publish(Event{
@@ -66,12 +73,12 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 				Service:     sc.name,
 			})
 		} else if err != nil {
-			// Service crashed — mark as failed before stopped.
+			// Service failed — mark as failed before stopped.
 			sc.log.Publish(Event{
 				Type:        EventServiceFailed,
 				Environment: sc.envName,
 				Service:     sc.name,
-				Error:       err.Error(),
+				Error:       domainErr,
 			})
 		}
 		sc.log.Publish(Event{
@@ -79,7 +86,10 @@ func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 			Environment: sc.envName,
 			Service:     sc.name,
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("%s", domainErr)
+		}
+		return nil
 	})
 }
 
@@ -93,7 +103,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 
 		allocated, err := ports.Allocate(sc.instanceID, n)
 		if err != nil {
-			return fmt.Errorf("service %q: allocate ports: %w", sc.name, err)
+			return fmt.Errorf("allocate ports: %w", err)
 		}
 
 		// Sort ingress names for deterministic port assignment.
@@ -115,7 +125,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			Ports:       portMap,
 		})
 		if err != nil {
-			return fmt.Errorf("service %q: publish: %w", sc.name, err)
+			return fmt.Errorf("publish: %w", err)
 		}
 
 		sc.ingresses = endpoints
@@ -136,7 +146,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 		if sc.observe {
 			proxyPorts, err := ports.Allocate(sc.instanceID, len(endpoints))
 			if err != nil {
-				return fmt.Errorf("service %q: allocate external proxy ports: %w", sc.name, err)
+				return fmt.Errorf("allocate external proxy ports: %w", err)
 			}
 			i := 0
 			for ingressName, ep := range endpoints {
@@ -187,8 +197,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 					e.Service == targetService
 			})
 			if err != nil {
-				return fmt.Errorf("service %q: waiting for egress %q (service %q): %w",
-					sc.name, egressName, targetService, err)
+				return fmt.Errorf("waiting for egress %q (service %q): %w",
+					egressName, targetService, err)
 			}
 
 			// Find the published ingress endpoint for the target.
@@ -199,8 +209,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 					e.Ingress == targetIngress
 			})
 			if err != nil {
-				return fmt.Errorf("service %q: finding endpoint for egress %q: %w",
-					sc.name, egressName, err)
+				return fmt.Errorf("finding endpoint for egress %q: %w",
+					egressName, err)
 			}
 
 			realEndpoint := *ev.Endpoint
@@ -209,8 +219,8 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 				// Create an egress proxy so the service talks through the proxy.
 				proxyPorts, err := ports.Allocate(sc.instanceID, 1)
 				if err != nil {
-					return fmt.Errorf("service %q: allocate egress proxy port for %q: %w",
-						sc.name, egressName, err)
+					return fmt.Errorf("allocate egress proxy port for %q: %w",
+						egressName, err)
 				}
 				fwd := &proxy.Forwarder{
 					ListenPort: proxyPorts[0],
@@ -238,10 +248,10 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 	})
 }
 
-// prestartStep runs the prestart hook if configured.
+// prestartStep runs the prestart hooks if configured.
 func prestartStep(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
-		if sc.spec.Hooks == nil || sc.spec.Hooks.Prestart == nil {
+		if sc.spec.Hooks == nil || len(sc.spec.Hooks.Prestart) == 0 {
 			return nil
 		}
 
@@ -251,8 +261,12 @@ func prestartStep(sc *serviceContext) run.Runner {
 			Service:     sc.name,
 		})
 
-		hook := sc.spec.Hooks.Prestart
-		return executeHook(ctx, sc, hook, true)
+		for _, hook := range sc.spec.Hooks.Prestart {
+			if err := executeHook(ctx, sc, hook, true); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -322,14 +336,31 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 }
 
 // readyCheckRunner polls all ingresses until they're ready.
+// If the service type implements ReadyChecker, its custom checker is used
+// instead of the default protocol-based one.
 func readyCheckRunner(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
+		rc, hasCustom := sc.svcType.(service.ReadyChecker)
+
 		for ingressName, ep := range sc.ingresses {
 			var readySpec *spec.ReadySpec
 			if ingSpec, ok := sc.spec.Ingresses[ingressName]; ok {
 				readySpec = ingSpec.Ready
 			}
-			checker := ready.ForEndpoint(ep, readySpec)
+
+			var checker ready.Checker
+			if hasCustom {
+				checker = rc.ReadyCheck(service.ReadyCheckParams{
+					ServiceName: sc.name,
+					InstanceID:  sc.instanceID,
+					IngressName: ingressName,
+					Endpoint:    ep,
+					Spec:        sc.spec,
+				})
+			} else {
+				checker = ready.ForEndpoint(ep, readySpec)
+			}
+
 			ingress := ingressName // capture for closure
 			onFailure := func(err error) {
 				sc.log.Publish(Event{
@@ -341,17 +372,17 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 				})
 			}
 			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec, onFailure); err != nil {
-				return fmt.Errorf("service %q, ingress %q: %w", sc.name, ingressName, err)
+				return fmt.Errorf("ingress %q: %w", ingressName, err)
 			}
 		}
 		return nil
 	})
 }
 
-// initRunner runs the init hook if configured.
+// initRunner runs the init hooks if configured.
 func initRunner(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
-		if sc.spec.Hooks == nil || sc.spec.Hooks.Init == nil {
+		if sc.spec.Hooks == nil || len(sc.spec.Hooks.Init) == 0 {
 			return nil
 		}
 
@@ -361,8 +392,12 @@ func initRunner(sc *serviceContext) run.Runner {
 			Service:     sc.name,
 		})
 
-		hook := sc.spec.Hooks.Init
-		return executeHook(ctx, sc, hook, false)
+		for _, hook := range sc.spec.Hooks.Init {
+			if err := executeHook(ctx, sc, hook, false); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -422,12 +457,45 @@ func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackTyp
 }
 
 // executeHook dispatches a hook to the appropriate executor.
-// Only client_func hooks are supported (via callback events).
+// client_func hooks are dispatched via callback events to the client SDK.
+// All other hook types are delegated to the service type's Initializer
+// and are only permitted during the init phase (includeEgresses=false).
 func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, includeEgresses bool) error {
-	if hook.Type != "client_func" || hook.ClientFunc == nil {
-		return fmt.Errorf("unsupported hook type %q (only client_func supported)", hook.Type)
+	if hook.Type == "client_func" {
+		if hook.ClientFunc == nil {
+			return fmt.Errorf("client_func hook missing client_func spec")
+		}
+		return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
 	}
-	return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
+
+	// Server-side hooks only run during init — the service must be running
+	// for the server to exec into it. Prestart hooks (includeEgresses=true)
+	// must be client_func.
+	if includeEgresses {
+		return fmt.Errorf("server-side hook type %q is not supported in prestart phase (only client_func hooks allowed)", hook.Type)
+	}
+
+	initializer, ok := sc.svcType.(service.Initializer)
+	if !ok {
+		return fmt.Errorf("unsupported hook type %q for service type %T", hook.Type, sc.svcType)
+	}
+
+	logWriter := &eventLogWriter{
+		log:     sc.log,
+		envName: sc.envName,
+		service: sc.name,
+	}
+
+	return initializer.Init(ctx, service.InitParams{
+		ServiceName: sc.name,
+		InstanceID:  sc.instanceID,
+		Spec:        sc.spec,
+		Ingresses:   sc.ingresses,
+		Egresses:    sc.egresses,
+		Hook:        hook,
+		Stdout:      &teeWriter{logWriter, "stdout"},
+		Stderr:      &teeWriter{logWriter, "stderr"},
+	})
 }
 
 // teeWriter writes service output to the event log.
@@ -509,4 +577,15 @@ func createTempDirs(envDir string, serviceNames []string) error {
 		}
 	}
 	return nil
+}
+
+// runPrefixRE matches the error prefixes added by run.Sequence and run.Group.
+// These are orchestration details (step indices, group names) that obscure the
+// actual failure cause in user-facing output.
+var runPrefixRE = regexp.MustCompile(`^(sequence \[\d+:\d+\]: |run\.Group\[[^\]]+\]: )+`)
+
+// stripRunPrefixes removes leading run.Sequence/run.Group error prefixes,
+// leaving only the domain error message.
+func stripRunPrefixes(s string) string {
+	return runPrefixRE.ReplaceAllString(s, "")
 }

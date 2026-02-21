@@ -82,14 +82,14 @@ func (d *GoDef) Args(args ...string) *GoDef {
 // InitHook registers a client-side function that runs after health checks
 // pass, before the service is marked ready. Receives own ingresses only.
 func (d *GoDef) InitHook(fn func(ctx context.Context, w Wiring) error) *GoDef {
-	d.hooks.init = hookFunc(fn)
+	d.hooks.init = append(d.hooks.init, hookFunc(fn))
 	return d
 }
 
 // PrestartHook registers a client-side function that runs after egresses
 // are resolved, before the service process starts. Receives full wiring.
 func (d *GoDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *GoDef {
-	d.hooks.prestart = hookFunc(fn)
+	d.hooks.prestart = append(d.hooks.prestart, hookFunc(fn))
 	return d
 }
 
@@ -156,13 +156,13 @@ func (d *FuncDef) EgressAs(name, service string, ingress ...string) *FuncDef {
 
 // InitHook registers a client-side init hook function.
 func (d *FuncDef) InitHook(fn func(ctx context.Context, w Wiring) error) *FuncDef {
-	d.hooks.init = hookFunc(fn)
+	d.hooks.init = append(d.hooks.init, hookFunc(fn))
 	return d
 }
 
 // PrestartHook registers a client-side prestart hook function.
 func (d *FuncDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *FuncDef {
-	d.hooks.prestart = hookFunc(fn)
+	d.hooks.prestart = append(d.hooks.prestart, hookFunc(fn))
 	return d
 }
 
@@ -239,13 +239,13 @@ func (d *ProcessDef) Args(args ...string) *ProcessDef {
 
 // InitHook registers a client-side init hook function.
 func (d *ProcessDef) InitHook(fn func(ctx context.Context, w Wiring) error) *ProcessDef {
-	d.hooks.init = hookFunc(fn)
+	d.hooks.init = append(d.hooks.init, hookFunc(fn))
 	return d
 }
 
 // PrestartHook registers a client-side prestart hook function.
 func (d *ProcessDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *ProcessDef {
-	d.hooks.prestart = hookFunc(fn)
+	d.hooks.prestart = append(d.hooks.prestart, hookFunc(fn))
 	return d
 }
 
@@ -314,12 +314,12 @@ func (d *CustomDef) Args(args ...string) *CustomDef {
 
 // InitHook registers a client-side init hook function.
 func (d *CustomDef) InitHook(fn func(ctx context.Context, w Wiring) error) *CustomDef {
-	d.hooks.init = hookFunc(fn)
+	d.hooks.init = append(d.hooks.init, hookFunc(fn))
 	return d
 }
 
 // PrestartHook registers a client-side prestart hook function.
 func (d *CustomDef) PrestartHook(fn func(ctx context.Context, w Wiring) error) *CustomDef {
-	d.hooks.prestart = hookFunc(fn)
+	d.hooks.prestart = append(d.hooks.prestart, hookFunc(fn))
 	return d
 }

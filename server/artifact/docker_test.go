@@ -12,11 +12,10 @@ import (
 
 func requireDocker(t *testing.T) {
 	t.Helper()
-	cli, err := dockerutil.NewClient()
+	cli, err := dockerutil.Client()
 	if err != nil {
 		t.Fatal("docker not available:", err)
 	}
-	defer cli.Close()
 	_, err = cli.Ping(context.Background())
 	if err != nil {
 		t.Fatal("docker daemon not reachable (is Docker running?):", err)

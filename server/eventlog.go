@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ const (
 	EventCallbackResponse EventType = "callback.response"
 
 	// Environment lifecycle.
+	EventEnvironmentFailing    EventType = "environment.failing"
 	EventEnvironmentDestroying EventType = "environment.destroying"
 	EventEnvironmentUp         EventType = "environment.up"
 	EventEnvironmentDown       EventType = "environment.down"
@@ -142,14 +144,18 @@ type Event struct {
 	Timestamp time.Time                            `json:"timestamp"`
 }
 
-// EventLog is a persistent, ordered event log. Events are appended with
-// monotonically increasing sequence numbers. Subscribers can replay from
-// any point. WaitFor scans the existing log before blocking.
+// EventLog is a persistent, ordered event log. Events are stored in two
+// separate slices — lifecycle events and log events (service.log) — sharing
+// a single monotonically increasing sequence counter. This keeps hot-path
+// scans (WaitFor, buildResolvedEnvironment) fast by avoiding high-volume
+// log output. When the full timeline is needed (Events, Subscribe, log dump),
+// both slices are zip-merged by sequence number.
 type EventLog struct {
-	mu     sync.RWMutex
-	events []Event
-	seq    uint64
-	notify chan struct{} // closed and replaced on each new event
+	mu        sync.RWMutex
+	lifecycle []Event // everything except service.log
+	logEvents []Event // service.log only
+	seq       uint64
+	notify    chan struct{} // closed and replaced on each new event
 }
 
 // NewEventLog creates an empty event log.
@@ -168,7 +174,11 @@ func (l *EventLog) Publish(event Event) {
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
-	l.events = append(l.events, event)
+	if event.Type == EventServiceLog {
+		l.logEvents = append(l.logEvents, event)
+	} else {
+		l.lifecycle = append(l.lifecycle, event)
+	}
 	ch := l.notify
 	l.notify = make(chan struct{})
 	l.mu.Unlock()
@@ -176,32 +186,80 @@ func (l *EventLog) Publish(event Event) {
 	close(ch) // wake all waiters
 }
 
-// Events returns a snapshot of all events in the log.
+// Events returns a snapshot of all events (lifecycle + log) merged by
+// sequence number.
 func (l *EventLog) Events() []Event {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	out := make([]Event, len(l.events))
-	copy(out, l.events)
+	return mergeSorted(l.lifecycle, l.logEvents)
+}
+
+// LifecycleEvents returns a snapshot of lifecycle events only, excluding
+// high-volume service.log events. Use this for building resolved state
+// or scanning for specific lifecycle transitions.
+func (l *EventLog) LifecycleEvents() []Event {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	out := make([]Event, len(l.lifecycle))
+	copy(out, l.lifecycle)
 	return out
 }
 
-// Since returns all events with sequence number > seq.
+// Since returns all events (lifecycle + log) with sequence number > seq,
+// merged by sequence number.
 func (l *EventLog) Since(seq uint64) []Event {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.eventsSince(seq)
+	return l.mergedSince(seq)
 }
 
-// eventsSince returns events with Seq > seq. Caller must hold at least l.mu.RLock.
-// Seq numbers are 1-indexed and contiguous, so events after seq start
-// at slice index seq.
-func (l *EventLog) eventsSince(seq uint64) []Event {
-	start := int(seq)
-	if start >= len(l.events) {
+// mergedSince returns all events from both slices with Seq > seq, merged
+// in sequence order. Caller must hold at least l.mu.RLock.
+func (l *EventLog) mergedSince(seq uint64) []Event {
+	a := sliceSince(l.lifecycle, seq)
+	b := sliceSince(l.logEvents, seq)
+	return mergeSorted(a, b)
+}
+
+// lifecycleSince returns lifecycle events with Seq > seq. Caller must hold
+// at least l.mu.RLock.
+func (l *EventLog) lifecycleSince(seq uint64) []Event {
+	return sliceSince(l.lifecycle, seq)
+}
+
+// sliceSince returns events from a sorted slice with Seq > seq.
+// Uses binary search since sequence numbers may have gaps.
+func sliceSince(events []Event, seq uint64) []Event {
+	i := sort.Search(len(events), func(i int) bool {
+		return events[i].Seq > seq
+	})
+	if i >= len(events) {
 		return nil
 	}
-	out := make([]Event, len(l.events)-start)
-	copy(out, l.events[start:])
+	out := make([]Event, len(events)-i)
+	copy(out, events[i:])
+	return out
+}
+
+// mergeSorted merges two slices that are each sorted by Seq into a single
+// sorted slice.
+func mergeSorted(a, b []Event) []Event {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := make([]Event, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].Seq < b[j].Seq {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
 	return out
 }
 
@@ -222,7 +280,7 @@ func (l *EventLog) Subscribe(ctx context.Context, fromSeq uint64, filter func(Ev
 		for {
 			// Grab current state under lock.
 			l.mu.RLock()
-			batch := l.eventsSince(cursor)
+			batch := l.mergedSince(cursor)
 			notify := l.notify
 			l.mu.RUnlock()
 
@@ -255,13 +313,13 @@ func (l *EventLog) Subscribe(ctx context.Context, fromSeq uint64, filter func(Ev
 	return ch
 }
 
-// WaitFor scans the existing log for a matching event. If found, returns it
-// immediately. Otherwise blocks until a matching event is published or the
-// context is cancelled.
+// WaitFor scans lifecycle events for a matching event. If found, returns it
+// immediately. Otherwise blocks until a matching lifecycle event is published
+// or the context is cancelled. Log events (service.log) are not scanned.
 func (l *EventLog) WaitFor(ctx context.Context, match func(Event) bool) (Event, error) {
-	// First, scan existing events under read lock.
+	// First, scan existing lifecycle events under read lock.
 	l.mu.RLock()
-	for _, e := range l.events {
+	for _, e := range l.lifecycle {
 		if match(e) {
 			l.mu.RUnlock()
 			return e, nil
@@ -271,12 +329,12 @@ func (l *EventLog) WaitFor(ctx context.Context, match func(Event) bool) (Event, 
 	notify := l.notify
 	l.mu.RUnlock()
 
-	// Not found in existing log — wait for new events.
+	// Not found in existing log — wait for new lifecycle events.
 	for {
 		select {
 		case <-notify:
 			l.mu.RLock()
-			batch := l.eventsSince(cursor)
+			batch := l.lifecycleSince(cursor)
 			notify = l.notify
 			l.mu.RUnlock()
 

@@ -360,3 +360,195 @@ func TestEventLog_ConcurrentPublish(t *testing.T) {
 		}
 	}
 }
+
+func TestEventLog_SplitLogEvents(t *testing.T) {
+	log := server.NewEventLog()
+
+	log.Publish(server.Event{Type: server.EventServiceStarting, Service: "a"})
+	log.Publish(server.Event{Type: server.EventServiceLog, Service: "a", Log: &server.LogEntry{Stream: "stdout", Data: "hello"}})
+	log.Publish(server.Event{Type: server.EventServiceLog, Service: "a", Log: &server.LogEntry{Stream: "stderr", Data: "warn"}})
+	log.Publish(server.Event{Type: server.EventServiceReady, Service: "a"})
+
+	// Events() merges both slices in seq order.
+	all := log.Events()
+	if len(all) != 4 {
+		t.Fatalf("Events: expected 4, got %d", len(all))
+	}
+	if all[0].Seq != 1 || all[1].Seq != 2 || all[2].Seq != 3 || all[3].Seq != 4 {
+		t.Errorf("Events seq order: %d %d %d %d", all[0].Seq, all[1].Seq, all[2].Seq, all[3].Seq)
+	}
+
+	// LifecycleEvents() excludes log events.
+	lc := log.LifecycleEvents()
+	if len(lc) != 2 {
+		t.Fatalf("LifecycleEvents: expected 2, got %d", len(lc))
+	}
+	if lc[0].Type != server.EventServiceStarting || lc[1].Type != server.EventServiceReady {
+		t.Errorf("LifecycleEvents types: %q %q", lc[0].Type, lc[1].Type)
+	}
+	if lc[0].Seq != 1 || lc[1].Seq != 4 {
+		t.Errorf("LifecycleEvents seqs: %d %d (want 1, 4)", lc[0].Seq, lc[1].Seq)
+	}
+}
+
+func TestEventLog_WaitForIgnoresLogEvents(t *testing.T) {
+	log := server.NewEventLog()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	var got server.Event
+	var gotErr error
+
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		got, gotErr = log.WaitFor(ctx, func(e server.Event) bool {
+			return e.Type == server.EventServiceReady
+		})
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Publish many log events — WaitFor should not match these.
+	for i := 0; i < 100; i++ {
+		log.Publish(server.Event{
+			Type:    server.EventServiceLog,
+			Service: "a",
+			Log:     &server.LogEntry{Stream: "stdout", Data: fmt.Sprintf("line %d", i)},
+		})
+	}
+
+	// Now publish the lifecycle event WaitFor is looking for.
+	log.Publish(server.Event{Type: server.EventServiceReady, Service: "a"})
+
+	wg.Wait()
+
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got.Type != server.EventServiceReady {
+		t.Errorf("type: got %q", got.Type)
+	}
+}
+
+func TestEventLog_SinceWithMixedEvents(t *testing.T) {
+	log := server.NewEventLog()
+
+	log.Publish(server.Event{Type: server.EventServiceStarting, Service: "a"}) // seq 1
+	log.Publish(server.Event{Type: server.EventServiceLog, Service: "a",       // seq 2
+		Log: &server.LogEntry{Stream: "stdout", Data: "hello"}})
+	log.Publish(server.Event{Type: server.EventServiceReady, Service: "a"}) // seq 3
+
+	events := log.Since(1) // events after seq 1
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Seq != 2 || events[1].Seq != 3 {
+		t.Errorf("seqs: %d %d (want 2, 3)", events[0].Seq, events[1].Seq)
+	}
+	if events[0].Type != server.EventServiceLog {
+		t.Errorf("event 0 type: got %q", events[0].Type)
+	}
+	if events[1].Type != server.EventServiceReady {
+		t.Errorf("event 1 type: got %q", events[1].Type)
+	}
+}
+
+func TestEventLog_SubscribeIncludesLogEvents(t *testing.T) {
+	log := server.NewEventLog()
+
+	log.Publish(server.Event{Type: server.EventServiceStarting, Service: "a"})
+	log.Publish(server.Event{Type: server.EventServiceLog, Service: "a",
+		Log: &server.LogEntry{Stream: "stdout", Data: "hello"}})
+	log.Publish(server.Event{Type: server.EventServiceReady, Service: "a"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	ch := log.Subscribe(ctx, 0, nil)
+
+	var events []server.Event
+	for i := 0; i < 3; i++ {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for events")
+		}
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+	if events[0].Seq != 1 || events[1].Seq != 2 || events[2].Seq != 3 {
+		t.Errorf("seqs: %d %d %d", events[0].Seq, events[1].Seq, events[2].Seq)
+	}
+}
+
+func TestEventLog_ConcurrentMixedPublish(t *testing.T) {
+	log := server.NewEventLog()
+
+	const n = 100
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			if i%3 == 0 {
+				log.Publish(server.Event{
+					Type:    server.EventServiceLog,
+					Service: fmt.Sprintf("svc-%d", i),
+					Log:     &server.LogEntry{Stream: "stdout", Data: "line"},
+				})
+			} else {
+				log.Publish(server.Event{
+					Type:    server.EventServiceStarting,
+					Service: fmt.Sprintf("svc-%d", i),
+				})
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	all := log.Events()
+	if len(all) != n {
+		t.Fatalf("expected %d events, got %d", n, len(all))
+	}
+
+	// Verify sequence numbers are unique, monotonic, and cover 1..n.
+	seen := make(map[uint64]bool)
+	for _, e := range all {
+		if seen[e.Seq] {
+			t.Errorf("duplicate seq: %d", e.Seq)
+		}
+		seen[e.Seq] = true
+	}
+	for i := 1; i <= n; i++ {
+		if !seen[uint64(i)] {
+			t.Errorf("missing seq: %d", i)
+		}
+	}
+
+	// Verify merged output is sorted by seq.
+	for i := 1; i < len(all); i++ {
+		if all[i].Seq <= all[i-1].Seq {
+			t.Errorf("out of order at index %d: seq %d <= %d", i, all[i].Seq, all[i-1].Seq)
+		}
+	}
+
+	// LifecycleEvents should be fewer than all.
+	lc := log.LifecycleEvents()
+	logCount := 0
+	for _, e := range all {
+		if e.Type == server.EventServiceLog {
+			logCount++
+		}
+	}
+	if len(lc) != n-logCount {
+		t.Errorf("LifecycleEvents: expected %d, got %d", n-logCount, len(lc))
+	}
+}
