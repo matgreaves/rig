@@ -99,6 +99,12 @@ type sqlHook struct {
 
 func (sqlHook) rigHook() {}
 
+type execHook struct {
+	command []string
+}
+
+func (execHook) rigHook() {}
+
 // startFunc is a function that runs as a service in the test process.
 type startFunc func(ctx context.Context) error
 

@@ -90,6 +90,15 @@ func (d *ContainerDef) EgressAs(name, service string, ingress ...string) *Contai
 	return d
 }
 
+// Exec registers an exec init hook that runs a command inside the container
+// after it becomes healthy. The command is executed server-side via docker exec.
+//
+//	rig.Container("redis:7").Port(6379).Exec("redis-cli", "SET", "key", "value")
+func (d *ContainerDef) Exec(cmd ...string) *ContainerDef {
+	d.hooks.init = append(d.hooks.init, execHook{command: cmd})
+	return d
+}
+
 // InitHook registers a client-side init hook function.
 func (d *ContainerDef) InitHook(fn func(ctx context.Context, w Wiring) error) *ContainerDef {
 	d.hooks.init = append(d.hooks.init, hookFunc(fn))

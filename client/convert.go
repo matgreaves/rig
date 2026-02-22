@@ -273,6 +273,12 @@ func hookToSpec(h hook, handlers map[string]hookFunc) (*spec.HookSpec, error) {
 			Type:   "sql",
 			Config: cfg,
 		}, nil
+	case execHook:
+		cfg, _ := json.Marshal(map[string]any{"command": hk.command})
+		return &spec.HookSpec{
+			Type:   "exec",
+			Config: cfg,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported hook type: %T", h)
 	}
