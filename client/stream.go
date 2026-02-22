@@ -51,7 +51,7 @@ func (s *streamState) recordEvent(ev wireEvent) {
 	}
 
 	line := fmt.Sprintf("  %5.2fs  %-22s %s", elapsed, ev.Type, label)
-	if ev.Error != "" {
+	if ev.Error != "" && ev.Type != "environment.failing" {
 		line += "    " + ev.Error
 	}
 	if ev.Type == "environment.failing" {
