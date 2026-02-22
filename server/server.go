@@ -66,6 +66,7 @@ func NewServer(
 		idle:     NewIdleTimer(idleTimeout),
 	}
 
+	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /environments", s.handleCreateEnvironment)
 	s.mux.HandleFunc("GET /environments/{id}/events", s.handleSSE)
 	s.mux.HandleFunc("POST /environments/{id}/events", s.handleClientEvent)
@@ -79,6 +80,11 @@ func NewServer(
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+// handleHealth handles GET /health. Returns 200 with {"status":"ok"}.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ShutdownCh returns a channel that is closed when the idle timer fires.
