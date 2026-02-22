@@ -161,7 +161,11 @@ func up(t testing.TB, services Services, opts ...Option) (*Environment, error) {
 	}
 
 	if o.serverURL == "" {
-		return nil, fmt.Errorf("rig: no server address; set RIG_SERVER_ADDR or use rig.WithServer()")
+		addr, err := ensureServer("")
+		if err != nil {
+			return nil, fmt.Errorf("rig: %w", err)
+		}
+		o.serverURL = addr
 	}
 
 	// Trim trailing slash for consistent URL construction.
