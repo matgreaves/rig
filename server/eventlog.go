@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -348,4 +349,36 @@ func (l *EventLog) WaitFor(ctx context.Context, match func(Event) bool) (Event, 
 			return Event{}, ctx.Err()
 		}
 	}
+}
+
+// ServiceLogTail returns the last n log lines for the named service,
+// formatted with "  | " prefixes. Returns "" if there are no log events.
+func (l *EventLog) ServiceLogTail(service string, n int) string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	var lines []string
+	for _, e := range l.logEvents {
+		if e.Service != service || e.Log == nil {
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimRight(e.Log.Data, "\n"), "\n") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	var b strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("  | ")
+		b.WriteString(line)
+	}
+	return b.String()
 }
