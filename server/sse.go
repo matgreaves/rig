@@ -38,7 +38,13 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	ch := inst.log.Subscribe(r.Context(), fromSeq, nil)
+	// Only stream lifecycle events over SSE — service.log is high-volume
+	// and not needed for coordination. Logs are still captured in the event
+	// log and available via GET /log and the timeline on DELETE.
+	filter := func(e Event) bool {
+		return e.Type != EventServiceLog
+	}
+	ch := inst.log.Subscribe(r.Context(), fromSeq, filter)
 	for event := range ch {
 		if err := writeSSEEvent(w, flusher, event); err != nil {
 			return // client disconnected

@@ -13,48 +13,28 @@ import (
 	"github.com/matgreaves/rig/connect"
 )
 
-const logTailLines = 10
-
-// streamState tracks lifecycle events and service log output during
-// streaming so that on failure we can produce a useful diagnostic
-// without requiring the user to open the event log file.
+// streamState tracks lifecycle events during streaming so that on failure
+// we can produce a useful diagnostic without requiring the user to open
+// the event log file.
 type streamState struct {
 	start    time.Time
 	failures []string
-	timeline []string            // pre-formatted timeline lines
-	logTail  map[string][]string // last N log lines per service
-	failed   map[string]bool     // services that failed (log tail gets inlined)
-	trigger  int                 // index of environment.failing in timeline, -1 if not set
+	timeline []string // pre-formatted timeline lines
+	trigger  int      // index of environment.failing in timeline, -1 if not set
 }
 
 func newStreamState() *streamState {
 	return &streamState{
 		start:   time.Now(),
-		logTail: make(map[string][]string),
-		failed:  make(map[string]bool),
 		trigger: -1,
 	}
 }
 
 // recordEvent formats a lifecycle event and appends it to the timeline.
-// Log events are buffered separately per service.
 func (s *streamState) recordEvent(ev wireEvent) {
 	elapsed := time.Since(s.start).Seconds()
 
 	switch ev.Type {
-	case "service.log":
-		if ev.Log == nil {
-			return
-		}
-		for _, line := range strings.Split(strings.TrimRight(ev.Log.Data, "\n"), "\n") {
-			tail := s.logTail[ev.Service]
-			if len(tail) >= logTailLines {
-				tail = tail[1:]
-			}
-			s.logTail[ev.Service] = append(tail, line)
-		}
-		return
-
 	case "callback.request", "callback.response",
 		"proxy.request", "proxy.connection",
 		"health.check_failed": // transient polling failures are noise
@@ -78,22 +58,14 @@ func (s *streamState) recordEvent(ev wireEvent) {
 		s.trigger = len(s.timeline) // mark current position as trigger
 	}
 	s.timeline = append(s.timeline, line)
-
-	// On service.failed, inline the log tail right after the timeline entry.
-	if ev.Type == "service.failed" {
-		s.failed[ev.Service] = true
-		for _, logLine := range s.logTail[ev.Service] {
-			s.timeline = append(s.timeline, "         | "+logLine)
-		}
-	}
 }
 
 // contextEvents is the number of lifecycle events shown before the trigger.
 const contextEvents = 5
 
 // formatFailure produces the error message shown to the user on environment.down.
-// It shows the failure cause, the event that triggered shutdown, its inlined
-// service logs, and a few preceding lifecycle events for context.
+// It shows the failure cause, the event that triggered shutdown, and a few
+// preceding lifecycle events for context.
 func (s *streamState) formatFailure() string {
 	var b strings.Builder
 	b.WriteString("environment failed")
@@ -108,21 +80,13 @@ func (s *streamState) formatFailure() string {
 			trigger = len(s.timeline) - 1
 		}
 
-		// Walk backwards from trigger over lifecycle entries (skip log lines).
-		context := 0
-		start := trigger
-		for start > 0 && context < contextEvents {
-			start--
-			if !strings.HasPrefix(s.timeline[start], "         |") {
-				context++
-			}
+		// Walk backwards from trigger to show context events before it.
+		start := trigger - contextEvents
+		if start < 0 {
+			start = 0
 		}
 
-		// Walk forwards from trigger past its inlined log lines.
 		end := trigger + 1
-		for end < len(s.timeline) && strings.HasPrefix(s.timeline[end], "         |") {
-			end++
-		}
 
 		b.WriteString("\n\n")
 		b.WriteString(strings.Join(s.timeline[start:end], "\n"))
@@ -138,7 +102,6 @@ type wireEvent struct {
 	Ingress    string                             `json:"ingress,omitempty"`
 	Artifact   string                             `json:"artifact,omitempty"`
 	Error      string                             `json:"error,omitempty"`
-	Log        *wireLogEntry                      `json:"log,omitempty"`
 	Callback   *wireCallbackRequest               `json:"callback,omitempty"`
 	Request    *wireRequestInfo                   `json:"request,omitempty"`
 	Connection *wireConnectionInfo                `json:"connection,omitempty"`
@@ -164,11 +127,6 @@ type wireConnectionInfo struct {
 	BytesIn    int64   `json:"bytes_in"`
 	BytesOut   int64   `json:"bytes_out"`
 	DurationMs float64 `json:"duration_ms"`
-}
-
-type wireLogEntry struct {
-	Stream string `json:"stream"`
-	Data   string `json:"data"`
 }
 
 type wireCallbackRequest struct {

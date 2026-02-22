@@ -195,11 +195,15 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 		}
 		if err := servicePhase.Run(ctx); err != nil {
 			if ctx.Err() == nil {
+				errMsg := err.Error()
+				if tail := o.Log.ServiceLogTail(failedService, 10); tail != "" {
+					errMsg += "\n" + tail
+				}
 				o.Log.Publish(Event{
 					Type:        EventEnvironmentFailing,
 					Environment: env.Name,
 					Service:     failedService,
-					Error:       err.Error(),
+					Error:       errMsg,
 				})
 			}
 			return err
