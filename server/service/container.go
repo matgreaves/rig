@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -40,6 +42,94 @@ func ContainerName(instanceID, serviceName string) string {
 // Container implements Type for the "container" service type.
 // It runs a Docker container with host-mapped ports.
 type Container struct{}
+
+// ExecHookConfig is the Config payload for "exec" hooks.
+type ExecHookConfig struct {
+	Command []string `json:"command"`
+}
+
+// ExecInContainer runs a command inside a running container via docker exec.
+// Output is written to stdout/stderr. Returns an error if the command exits
+// with a non-zero status.
+func ExecInContainer(ctx context.Context, containerName string, cmd []string, stdout, stderr io.Writer) error {
+	cli, err := dockerutil.Client()
+	if err != nil {
+		return fmt.Errorf("exec: docker client: %w", err)
+	}
+
+	exec, err := cli.ContainerExecCreate(ctx, containerName, container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	})
+	if err != nil {
+		return fmt.Errorf("exec create: %w", err)
+	}
+
+	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("exec attach: %w", err)
+	}
+
+	_, err = stdcopy.StdCopy(stdout, stderr, resp.Reader)
+	resp.Close()
+	if err != nil {
+		return fmt.Errorf("exec read output: %w", err)
+	}
+
+	inspect, err := cli.ContainerExecInspect(ctx, exec.ID)
+	if err != nil {
+		return fmt.Errorf("exec inspect: %w", err)
+	}
+	if inspect.ExitCode != 0 {
+		return fmt.Errorf("exec %v: exit code %d", cmd, inspect.ExitCode)
+	}
+	return nil
+}
+
+// waitForContainer polls until the named Docker container exists and is
+// running. This is needed when exec hooks race with container creation —
+// for example, a no-ingress service has no health check, so the lifecycle
+// can fire init hooks before Container.Runner has created the container.
+func waitForContainer(ctx context.Context, containerName string) error {
+	cli, err := dockerutil.Client()
+	if err != nil {
+		return err
+	}
+	for {
+		inspect, err := cli.ContainerInspect(ctx, containerName)
+		if err == nil && inspect.State.Running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// Init handles server-side init hooks for the container service type.
+// Supports the "exec" hook type — runs a command inside the running container.
+func (Container) Init(ctx context.Context, params InitParams) error {
+	if params.Hook.Type != "exec" {
+		return fmt.Errorf("container: unsupported hook type %q", params.Hook.Type)
+	}
+
+	var cfg ExecHookConfig
+	if err := json.Unmarshal(params.Hook.Config, &cfg); err != nil {
+		return fmt.Errorf("container init: invalid exec hook config: %w", err)
+	}
+	if len(cfg.Command) == 0 {
+		return fmt.Errorf("container init: exec hook command is empty")
+	}
+
+	containerName := ContainerName(params.InstanceID, params.ServiceName)
+	if err := waitForContainer(ctx, containerName); err != nil {
+		return fmt.Errorf("container init: waiting for container: %w", err)
+	}
+	return ExecInContainer(ctx, containerName, cfg.Command, params.Stdout, params.Stderr)
+}
 
 // Artifacts returns a DockerPull artifact for the configured image.
 func (Container) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {

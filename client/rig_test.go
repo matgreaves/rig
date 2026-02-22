@@ -470,6 +470,63 @@ func TestUp(t *testing.T) {
 		}
 	})
 
+	t.Run("ContainerExecHook", func(t *testing.T) {
+		t.Parallel()
+
+		// Use nginx:alpine which has a working HTTP server — this ensures
+		// the container is healthy (HTTP check passes) before exec hooks run.
+		// The exec hook writes a file; a client-side init hook verifies it ran.
+		var verified bool
+		env := rig.Up(t, rig.Services{
+			"box": rig.Container("nginx:alpine").Port(80).
+				Exec("sh", "-c", "echo hello > /tmp/exec-test").
+				InitHook(func(ctx context.Context, w rig.Wiring) error {
+					verified = true
+					return nil
+				}),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+		if !verified {
+			t.Fatal("client-side init hook was not called (exec hook may have failed)")
+		}
+
+		if _, ok := env.Services["box"]; !ok {
+			t.Error("box service not in resolved environment")
+		}
+	})
+
+	t.Run("ContainerExecHookFailure", func(t *testing.T) {
+		t.Parallel()
+
+		// Exec a command that will fail (nonexistent binary).
+		_, err := rig.TryUp(t, rig.Services{
+			"box": rig.Container("nginx:alpine").Port(80).
+				Exec("nonexistent-binary"),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+		if err == nil {
+			t.Fatal("expected Up to fail due to exec hook error")
+		}
+		t.Logf("captured failure: %s", err)
+	})
+
+	t.Run("ContainerExecHookNoIngress", func(t *testing.T) {
+		t.Parallel()
+
+		// A no-ingress container with an exec hook. Without waitForContainer,
+		// the exec hook races with container creation and fails because the
+		// container doesn't exist yet when docker exec is called.
+		env := rig.Up(t, rig.Services{
+			"box": rig.Container("alpine:latest").
+				Cmd("sh", "-c", "sleep 300").
+				NoIngress().
+				Exec("sh", "-c", "echo hello > /tmp/exec-test"),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+		if _, ok := env.Services["box"]; !ok {
+			t.Error("box service not in resolved environment")
+		}
+	})
+
 	t.Run("InitHookFailure", func(t *testing.T) {
 		t.Parallel()
 

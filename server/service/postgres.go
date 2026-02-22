@@ -8,8 +8,6 @@ import (
 	"strconv"
 
 	"github.com/docker/docker/api/types/container"
-	dclient "github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/matgreaves/rig/server/artifact"
 	"github.com/matgreaves/rig/server/dockerutil"
 	"github.com/matgreaves/rig/server/ready"
@@ -141,13 +139,20 @@ type sqlHookConfig struct {
 }
 
 // Init handles server-side hooks for the Postgres service type.
-// Only the "sql" hook type is supported — it runs each statement via
-// docker exec psql inside the running container.
+// Supports "sql" (runs each statement via psql) and "exec" (runs an arbitrary
+// command inside the container).
 func (Postgres) Init(ctx context.Context, params InitParams) error {
-	if params.Hook.Type != "sql" {
+	switch params.Hook.Type {
+	case "sql":
+		return postgresInitSQL(ctx, params)
+	case "exec":
+		return Container{}.Init(ctx, params)
+	default:
 		return fmt.Errorf("postgres: unsupported hook type %q", params.Hook.Type)
 	}
+}
 
+func postgresInitSQL(ctx context.Context, params InitParams) error {
 	var cfg sqlHookConfig
 	if err := json.Unmarshal(params.Hook.Config, &cfg); err != nil {
 		return fmt.Errorf("postgres: invalid sql hook config: %w", err)
@@ -158,53 +163,13 @@ func (Postgres) Init(ctx context.Context, params InitParams) error {
 
 	containerName := ContainerName(params.InstanceID, params.ServiceName)
 
-	cli, err := dockerutil.Client()
-	if err != nil {
-		return fmt.Errorf("postgres init: docker client: %w", err)
-	}
-
 	for _, stmt := range cfg.Statements {
-		if err := execPsql(ctx, cli, containerName, params.ServiceName, stmt, params); err != nil {
-			return err
+		cmd := []string{"psql", "-h", "localhost", "-U", postgresDefaultUser, "-d", params.ServiceName, "-v", "ON_ERROR_STOP=1", "-c", stmt}
+		if err := ExecInContainer(ctx, containerName, cmd, params.Stdout, params.Stderr); err != nil {
+			return fmt.Errorf("postgres init: statement %q: %w", stmt, err)
 		}
 	}
 
-	return nil
-}
-
-// execPsql runs a single SQL statement via docker exec psql.
-// By the time Init is called, the pg_isready health check has passed,
-// so postgres is guaranteed to be accepting connections.
-func execPsql(ctx context.Context, cli *dclient.Client, containerName, dbName, stmt string, params InitParams) error {
-	execCfg := container.ExecOptions{
-		Cmd:          []string{"psql", "-h", "localhost", "-U", postgresDefaultUser, "-d", dbName, "-v", "ON_ERROR_STOP=1", "-c", stmt},
-		AttachStdout: true,
-		AttachStderr: true,
-	}
-
-	exec, err := cli.ContainerExecCreate(ctx, containerName, execCfg)
-	if err != nil {
-		return fmt.Errorf("postgres init: exec create: %w", err)
-	}
-
-	resp, err := cli.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return fmt.Errorf("postgres init: exec attach: %w", err)
-	}
-
-	_, err = stdcopy.StdCopy(params.Stdout, params.Stderr, resp.Reader)
-	resp.Close()
-	if err != nil {
-		return fmt.Errorf("postgres init: read output: %w", err)
-	}
-
-	inspect, err := cli.ContainerExecInspect(ctx, exec.ID)
-	if err != nil {
-		return fmt.Errorf("postgres init: exec inspect: %w", err)
-	}
-	if inspect.ExitCode != 0 {
-		return fmt.Errorf("postgres init: statement %q failed with exit code %d", stmt, inspect.ExitCode)
-	}
 	return nil
 }
 

@@ -56,6 +56,15 @@ func (d *PostgresDef) InitSQL(statements ...string) *PostgresDef {
 	return d
 }
 
+// Exec registers an exec init hook that runs a command inside the container
+// after it becomes healthy. The command is executed server-side via docker exec.
+//
+//	rig.Postgres().Exec("psql", "-U", "postgres", "-c", "CREATE EXTENSION pg_trgm")
+func (d *PostgresDef) Exec(cmd ...string) *PostgresDef {
+	d.hooks.init = append(d.hooks.init, execHook{command: cmd})
+	return d
+}
+
 // InitHook registers a client-side init hook function.
 func (d *PostgresDef) InitHook(fn func(ctx context.Context, w Wiring) error) *PostgresDef {
 	d.hooks.init = append(d.hooks.init, hookFunc(fn))
