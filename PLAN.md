@@ -1249,70 +1249,97 @@ rig/
 
 ## Build Plan
 
-### Phase 1 — Spec Types + Validation
-- `spec/` types: `Endpoint`, `Protocol`, `IngressSpec`, `EgressSpec`, `HookSpec`, `ReadySpec`, `ServiceStatus`, `Service`, `Environment`
-- JSON round-trip serialization tests
-- Single-ingress shorthand resolution logic
-- `server/validate.go` — spec validation (see Spec Validation section)
+### Phases 1–7 — COMPLETE
 
-### Phase 2 — Core Infrastructure
-- `server/eventlog.go` — log-based event bus with publish, subscribe (with replay from any sequence number), WaitFor (scans existing log before blocking), and full log snapshot for post-mortem analysis
-- `server/ports.go` — random port allocator using OS-assigned ports (`:0` bind), in-process tracking for active environments
-- `server/wiring.go` — attribute → env var mapping, prefix rules, template expansion
+Core architecture is built and tested:
+- **Phase 1** — Spec types + validation (`spec/`, `server/validate.go`)
+- **Phase 2** — Core infrastructure (event log, ports, wiring)
+- **Phase 3** — Lifecycle orchestration + health checks (`server/lifecycle.go`, `server/ready/`)
+- **Phase 4** — HTTP API + SSE + end-to-end tests (`server/server.go`, `server/sse.go`)
+- **Phase 5** — Artifact system with caching and dedup (`server/artifact/`)
+- **Phase 6** — Go client SDK (`client/`) — note: `ensureServer` auto-management deferred to Phase 11
+- **Phase 7** — Docker container service type (`server/service/container.go`)
 
-### Phase 3 — Lifecycle Orchestration + Health Checks
-- `server/lifecycle.go` — the lifecycle sequence using `run`
-- `server/orchestrator.go` — builds `run.Group` from spec, coordinates artifact + service phases
-- `server/service/type.go` — `ServiceType` interface + registry
-- `server/service/process.go` — simplest concrete type
-- `server/ready/` — TCP, HTTP, gRPC readiness checks with exponential backoff, integrated into the lifecycle `ready` step
-- Small test binaries in `testdata/` (HTTP echo server, gRPC greeter) for integration testing
-- In-process integration tests that exercise `orchestrate()` directly with process-based services and real health checks against TCP/HTTP endpoints. These validate the lifecycle sequence, event log ordering, egress-driven dependency waiting, health check behaviour, and teardown without the HTTP layer. Catches lifecycle bugs early before Phase 4 adds the API surface.
+Also shipped: transparent HTTP/TCP proxy (`server/proxy/`), split event log optimization, benchmarks.
 
-### Phase 4 — HTTP API + SSE + In-Process End-to-End Tests
-- `server/server.go` — HTTP API: `POST /environments`, `DELETE /environments/{id}`, `GET /environments/{id}`, `POST /environments/{id}/callbacks/{request_id}`
-- `server/sse.go` — SSE stream handler: `GET /environments/{id}/events` streams lifecycle events, callback requests, and service logs to clients
-- `server/idle.go` — idle timeout, auto-shutdown when no active environments
-- End-to-end tests that exercise the full stack as a user would: create environment via POST → open SSE stream → handle callback requests → verify resolved environment from `environment.up` event → tear down via DELETE
-- Tests use real process-based services (small test binaries in `testdata/`) to validate the lifecycle, wiring, template expansion, callback coordination, and health checks work correctly through the HTTP + SSE API
-- These tests remain valuable as the system evolves because they test the public contract, not implementation details
+### Phase 8 — Builtin Service Types (Postgres complete, Temporal + Redis remaining)
 
-### Phase 5 — Artifact System
-- `server/artifact/cache.go` — content-addressable cache with file locks
-- `server/artifact/resolver.go` — parallel resolution with dedup
-- `server/artifact/docker.go` — Docker image pre-pull
-- `server/artifact/gobuild.go` — Go module compilation + source hash cache strategy
-- `server/service/gobuild.go` — GoBuild service type (first type with a real artifact)
+**Done:**
+- `server/service/postgres.go` — container lifecycle, `pg_isready` health check, PG attribute publishing, SQL init hooks via `docker exec psql`
+- Client API: `rig.Postgres().InitSQL(...).InitHook(fn)`
 
-### Phase 6 — Go Client SDK
-- `client/client.go` — HTTP client, `Up`/`Down`
-- `client/stream.go` — SSE stream reader + event loop (callback dispatch, log streaming, terminal event detection)
-- `client/server.go` — rigd auto-management (download, cache, start with file lock, address file discovery)
-- `client/builder.go` — fluent builder API
-- `client/handler.go` — inline func registration
+**Remaining:**
+- `server/service/temporal.go` — Temporal dev server. Requires the Download artifact resolver (binary, not container). Publishes `TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE`. Custom ready check against gRPC health endpoint. Init hooks: `create-namespace`, `create-search-attributes`
+- `server/service/redis.go` — Redis container. Publishes `REDIS_URL`. Straightforward container wrapper
+- `server/artifact/download.go` — Download resolver. Fetch URL to local path, cached by URL + checksum. Needed by Temporal (and future binary-distributed services)
 
-### Phase 7 — Container Support
-- `server/service/container.go` — Docker container lifecycle via Docker SDK
-- Port mapping (host port ↔ container port)
-- Integration with artifact phase (pre-pull)
+### Phase 9 — Generic `exec` Init Hook
 
-### Phase 8 — Builtin Service Types
-- `server/service/postgres.go` — Postgres container + PG attribute publishing
-- `server/service/temporal.go` — Temporal dev server (download binary, generate namespace)
-- `server/service/redis.go` — Redis container
-- Built-in hooks: `initdb`, `create-namespace`, `create-search-attributes`
+Most cloud services in test environments are containers with a CLI for setup (create topic, create bucket, create queue). Rather than building a server-side type for each one, a generic `exec` hook lets users define init commands declaratively:
 
-### Phase 9 — Client-Side Service Types
-- Extend callback event types for full lifecycle delegation (publish, start, ready)
-- `client/type.go` — client-side `ServiceType` registration (handlers dispatched via the SSE event loop)
-- Prove a custom type works end-to-end
+```json
+"hooks": {
+  "init": [{"type": "exec", "config": {"command": ["kafka-topics", "--create", "--topic", "orders"]}}]
+}
+```
 
-### Phase 10 — Polish & rigd CLI
-- CLI for `rigd` (start, status, logs, environment introspection)
-- Error message quality review across all phases
-- Timeout diagnostic messages (which service is stuck, what it's waiting on, dependency status)
-- Documentation: godoc on all public API surfaces in `client/`
+This runs `docker exec` into the running container after it's healthy. The server already does this for Postgres's `psql` execution — this generalises it to any container service.
+
+**Why this matters:** unlocks Kafka, LocalStack, Elasticsearch, RabbitMQ, and any container-with-a-CLI from any SDK language, entirely declaratively. No client-side code, no callback round-trips. Reduces the pressure on both new builtin types and client-side custom types.
+
+**Implementation:**
+- Extract the `docker exec` logic from Postgres into a shared `execInContainer` helper
+- Add `exec` as a recognised hook type on the Container service type's `Initializer`
+- Postgres's SQL hook becomes a thin wrapper that builds the `psql` command and delegates to `execInContainer`
+
+### Phase 10 — Diagnostics & Debugging
+
+**Progress watchdog:** Track the last time any service changed lifecycle phase. If no progress for 30 seconds, log a diagnostic snapshot: which services are blocked, in which phase, what they're waiting on, and the current status of their dependencies. The watchdog does not abort — it only logs. The environment startup timeout remains the hard boundary.
+
+**`RIG_PRESERVE_ON_FAILURE`:** When a test fails, preserve temp directories, log files, and state instead of cleaning them up. The Go SDK checks `t.Failed()` in the cleanup function. Set `RIG_PRESERVE=true` to preserve on every run regardless of outcome.
+
+**Timeout diagnostics:** When any timeout fires, include which service is stuck, which lifecycle phase it's in, and what it's waiting on. Example: `"environment startup timeout (2m0s): service 'order-service' stuck in WAIT_FOR_EGRESSES — waiting on 'postgres' (status: starting)"`
+
+### Phase 11 — `rigd` Binary & Server Auto-Management
+
+**Why this is on the critical path:** The target use case is Java apps using Temporal, Postgres, and cloud services. Java tests need a Java SDK, which requires `rigd` as a standalone HTTP server. The in-process Go model works today but doesn't extend to other languages.
+
+**`cmd/rigd/main.go`:**
+- Starts the HTTP server on a random port
+- Writes listen address to `~/.rig/rigd-<hash>.addr`
+- Removes address file on shutdown
+- Idle timeout shuts down after no active environments for 5 minutes
+- Signal handling (SIGINT/SIGTERM) for graceful shutdown
+
+**`ensureServer` in Go SDK (`client/server.go`):**
+1. Check for running `rigd` via address file `~/.rig/rigd-<hash>.addr`
+2. If found, probe with HTTP health check to confirm liveness
+3. If not running, check `~/.rig/bin/<hash>/rigd` for cached binary
+4. If not cached, download the correct binary for the platform
+5. Acquire per-hash file lock (`~/.rig/rigd-<hash>.lock`) to prevent races
+6. Start `rigd` as a detached background process
+7. Release lock — other processes waiting on it find `rigd` running at step 1
+
+The SDK embeds a content hash of the compatible `rigd` version. Multiple engine versions coexist — each writes to its own address file. See the Versioning Model section above.
+
+### Phase 12 — Java SDK
+
+Thin client: HTTP client + SSE stream reader + spec builder. No server, no orchestration, no port allocation.
+
+- **Spec builder** — fluent Java API that produces the same JSON spec the Go SDK produces
+- **SSE stream reader** — reads lifecycle events, dispatches callback requests to registered handlers
+- **Callback dispatch** — for `client_func` hooks (prestart/init closures defined in test code)
+- **Test framework integration** — JUnit 5 extension that calls `Up()` before test, `Down()` after, registers cleanup
+- **`ensureServer`** — same protocol as Go SDK (address file, file lock, download, start)
+
+The Java SDK should be a few hundred lines — the server does all the real work.
+
+### Phase 13 — Polish
+
+- Godoc on all public API surfaces in `client/`
 - Example test files demonstrating common patterns (postgres + service, temporal workflow, multi-service graph)
+- Error message quality review across all phases
+- `sc.emit()` refactor — typed helper methods on `serviceContext` to reduce Event construction boilerplate in lifecycle.go
 
 ---
 
