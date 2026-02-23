@@ -10,8 +10,8 @@ import (
 // belong to which environment instance. This prevents the same rigd from
 // handing out a port that is already in use by another active environment.
 type PortAllocator struct {
-	mu        sync.Mutex
-	allocated map[int]string   // port → instance ID
+	mu         sync.Mutex
+	allocated  map[int]string   // port → instance ID
 	byInstance map[string][]int // instance ID → ports (reverse index for O(k) release)
 }
 

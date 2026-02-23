@@ -232,9 +232,21 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 
 	// Register cleanup: stop functions, destroy the environment.
 	// Always write the event log so it's available for inspection.
+	// envDir is captured by reference and set after streaming succeeds.
+	var envDir string
 	t.Cleanup(func() {
 		funcCancel()
-		logFile := destroyEnvironment(o.serverURL, envID)
+		preserve := os.Getenv("RIG_PRESERVE") == "true" ||
+			(t.Failed() && os.Getenv("RIG_PRESERVE_ON_FAILURE") == "true")
+		logFile := destroyEnvironment(o.serverURL, envID, preserve)
+		if t.Failed() && envDir != "" {
+			if preserve {
+				t.Logf("rig: environment dir (preserved): %s", envDir)
+			} else {
+				t.Logf("rig: environment dir (cleaned): %s", envDir)
+				t.Logf("rig: to preserve on failure, set RIG_PRESERVE_ON_FAILURE=true")
+			}
+		}
 		if logFile != "" {
 			t.Logf("rig: event log: %s", logFile)
 		}
@@ -248,6 +260,8 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 	if err != nil {
 		return nil, fmt.Errorf("rig: %v", err)
 	}
+
+	envDir = resolved.EnvDir
 
 	resolved.ID = envID
 	resolved.Name = t.Name()
@@ -263,8 +277,11 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 // destroyEnvironment sends DELETE /environments/{id}?log=true. Blocks until
 // teardown completes. The server writes the event log to disk and returns the
 // path. Errors are swallowed — cleanup must not abort other tests.
-func destroyEnvironment(serverURL, envID string) string {
+func destroyEnvironment(serverURL, envID string, preserve bool) string {
 	url := fmt.Sprintf("%s/environments/%s?log=true", serverURL, envID)
+	if preserve {
+		url += "&preserve=true"
+	}
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
 		return ""

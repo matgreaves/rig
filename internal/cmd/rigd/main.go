@@ -38,7 +38,7 @@ func main() {
 	s := server.NewServer(
 		server.NewPortAllocator(),
 		reg,
-		"",    // tempBase — use OS default
+		"", // tempBase — use OS default
 		*idle,
 		*rigDir,
 	)

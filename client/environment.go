@@ -12,6 +12,7 @@ type Environment struct {
 	ID       string
 	Name     string
 	Services map[string]ResolvedService
+	EnvDir   string // server-side temp directory for this environment
 
 	// T is a wrapped testing.TB that automatically captures assertion
 	// failures (Fatal, Fatalf, Error, Errorf) as test.note events in

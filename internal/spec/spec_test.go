@@ -160,9 +160,9 @@ func TestFullEnvironmentRoundTrip(t *testing.T) {
 				},
 			},
 			"order-service": {
-				Type: "go",
+				Type:   "go",
 				Config: json.RawMessage(`{"module":"./cmd/order-service"}`),
-				Args: []string{"-c", "${RIG_TEMP_DIR}/config.json"},
+				Args:   []string{"-c", "${RIG_TEMP_DIR}/config.json"},
 				Ingresses: map[string]spec.IngressSpec{
 					"api": {
 						Protocol: spec.HTTP,

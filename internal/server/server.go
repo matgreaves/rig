@@ -34,9 +34,11 @@ type Server struct {
 
 // envInstance holds the runtime state of a single active environment.
 type envInstance struct {
-	id   string
-	spec *spec.Environment
-	log  *EventLog
+	id       string
+	spec     *spec.Environment
+	log      *EventLog
+	envDir   string
+	preserve *bool // shared with Orchestrator; set to true to skip cleanup
 
 	cancel context.CancelFunc
 	done   <-chan error // receives runner's terminal error (buffered 1)
@@ -118,15 +120,17 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	}
 
 	envLog := NewEventLog()
+	preserve := false
 	orch := &Orchestrator{
 		Ports:    s.ports,
 		Registry: s.registry,
 		Log:      envLog,
 		TempBase: s.tempBase,
 		CacheDir: filepath.Join(s.rigDir, "cache"),
+		Preserve: &preserve,
 	}
 
-	runner, id, err := orch.Orchestrate(&env)
+	runner, id, envDir, err := orch.Orchestrate(&env)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "orchestrate: "+err.Error())
 		return
@@ -136,11 +140,13 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	done := make(chan error, 1)
 
 	inst := &envInstance{
-		id:     id,
-		spec:   &env,
-		log:    envLog,
-		cancel: cancel,
-		done:   done,
+		id:       id,
+		spec:     &env,
+		log:      envLog,
+		envDir:   envDir,
+		preserve: &preserve,
+		cancel:   cancel,
+		done:     done,
 	}
 
 	s.mu.Lock()
@@ -174,6 +180,7 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 						Type:        EventEnvironmentUp,
 						Environment: env.Name,
 						Ingresses:   ingresses,
+						EnvDir:      envDir,
 					})
 					return
 				}
@@ -183,10 +190,12 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 		err := runner.Run(ctx)
 
 		// Emit environment.down before signalling done so that SSE clients
-		// see the terminal event before DELETE returns.
+		// see the terminal event before DELETE returns. Include a pre-formatted
+		// summary so client SDKs can use it directly as an error message.
 		envLog.Publish(Event{
 			Type:        EventEnvironmentDown,
 			Environment: env.Name,
+			Message:     buildDownSummary(envLog),
 		})
 
 		done <- err
@@ -330,6 +339,14 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
+	// Set preserve flag before cancelling so the orchestrator's cleanup
+	// defer sees it. Supports both query param and server-wide env var.
+	if r.URL.Query().Get("preserve") == "true" || os.Getenv("RIG_PRESERVE") == "true" {
+		if inst.preserve != nil {
+			*inst.preserve = true
+		}
+	}
+
 	inst.cancel()
 	<-inst.done
 
@@ -337,8 +354,9 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 	s.idle.EnvironmentDestroyed()
 
 	result := map[string]any{
-		"id":     id,
-		"status": "destroyed",
+		"id":      id,
+		"status":  "destroyed",
+		"env_dir": inst.envDir,
 	}
 	if r.URL.Query().Get("log") == "true" {
 		if path, err := s.writeEventLog(inst); err == nil {
@@ -444,6 +462,115 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 		Name:     inst.spec.Name,
 		Services: services,
 	}
+}
+
+// contextEvents is the number of lifecycle events shown before the trigger
+// in the failure summary.
+const contextEvents = 5
+
+// buildDownSummary scans the event log and builds a human-readable failure
+// summary for the environment.down event. Client SDKs use this directly as
+// their error message, avoiding the need to reimplement timeline formatting.
+// Returns "" for normal (non-failure) shutdowns.
+func buildDownSummary(log *EventLog) string {
+	events := log.LifecycleEvents()
+	if len(events) == 0 {
+		return ""
+	}
+
+	// Collect failure causes and find the trigger event.
+	var failures []string
+	triggerIdx := -1
+	for i, e := range events {
+		if e.Type == EventEnvironmentFailing {
+			failures = append(failures, e.Error)
+			if triggerIdx == -1 {
+				triggerIdx = i
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return "" // normal shutdown
+	}
+
+	var b strings.Builder
+	b.WriteString("environment failed:\n  ")
+	b.WriteString(strings.Join(failures, "\n  "))
+
+	// Build a short timeline of events leading up to the failure.
+	// Filter to the same set of events the full timeline uses.
+	type timelineEntry struct {
+		elapsed float64
+		text    string
+	}
+	start := events[0].Timestamp
+	var timeline []timelineEntry
+	for i, e := range events {
+		switch e.Type {
+		case EventServiceLog, EventHealthCheckFailed,
+			EventCallbackRequest, EventCallbackResponse,
+			EventRequestCompleted, EventConnectionOpened, EventConnectionClosed,
+			EventGRPCCallCompleted, EventProxyPublished:
+			continue
+		}
+		elapsed := e.Timestamp.Sub(start).Seconds()
+
+		if e.Type == EventProgressStall && e.Message != "" {
+			lines := strings.Split(e.Message, "\n")
+			first := fmt.Sprintf("  %5.2fs  %-22s %s", elapsed, e.Type, lines[0])
+			timeline = append(timeline, timelineEntry{elapsed, first})
+			for _, line := range lines[1:] {
+				timeline = append(timeline, timelineEntry{elapsed, "          " + line})
+			}
+			continue
+		}
+
+		subject := e.Service
+		if subject == "" {
+			subject = e.Artifact
+		}
+		detail := e.Error
+
+		var line string
+		if subject != "" && detail != "" && e.Type != EventEnvironmentFailing {
+			line = fmt.Sprintf("  %5.2fs  %-22s %-12s %s", elapsed, e.Type, subject, detail)
+		} else if subject != "" {
+			line = fmt.Sprintf("  %5.2fs  %-22s %s", elapsed, e.Type, subject)
+		} else if detail != "" && e.Type != EventEnvironmentFailing {
+			line = fmt.Sprintf("  %5.2fs  %-22s %s", elapsed, e.Type, detail)
+		} else {
+			line = fmt.Sprintf("  %5.2fs  %s", elapsed, e.Type)
+		}
+
+		timeline = append(timeline, timelineEntry{elapsed, line})
+
+		// If this is the trigger, record where we are in timeline.
+		if i == triggerIdx {
+			triggerIdx = len(timeline) - 1
+		}
+	}
+
+	if len(timeline) > 0 {
+		// Show context events before the trigger.
+		end := triggerIdx + 1
+		if end > len(timeline) {
+			end = len(timeline)
+		}
+		startIdx := end - contextEvents - 1
+		if startIdx < 0 {
+			startIdx = 0
+		}
+
+		b.WriteString("\n\n")
+		for i := startIdx; i < end; i++ {
+			if i > startIdx {
+				b.WriteByte('\n')
+			}
+			b.WriteString(timeline[i].text)
+		}
+	}
+
+	return b.String()
 }
 
 // handleGetLog handles GET /environments/{id}/log.
@@ -577,6 +704,16 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 		}
 		if e.Type == EventConnectionOpened || e.Type == EventProxyPublished {
 			// Skip noisy per-open events.
+			continue
+		}
+		if e.Type == EventProgressStall && e.Diagnostic != nil {
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s no progress for %s", elapsed, e.Type, e.Diagnostic.StalledFor)
+			for _, svc := range e.Diagnostic.Services {
+				fmt.Fprintf(&b, "\n           %s  %s: %s", strings.Repeat(" ", 22), svc.Name, svc.Phase)
+				if len(svc.WaitingOn) > 0 {
+					fmt.Fprintf(&b, " — waiting on %s", strings.Join(svc.WaitingOn, ", "))
+				}
+			}
 			continue
 		}
 

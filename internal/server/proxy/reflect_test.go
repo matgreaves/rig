@@ -208,4 +208,3 @@ func makeFrame(payload []byte) []byte {
 	copy(frame[5:], payload)
 	return frame
 }
-

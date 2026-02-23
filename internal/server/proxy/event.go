@@ -21,12 +21,12 @@ type RequestInfo struct {
 	RequestSize  int64
 	ResponseSize int64
 
-	RequestHeaders          map[string][]string
-	RequestBody             []byte
-	RequestBodyTruncated    bool
-	ResponseHeaders         map[string][]string
-	ResponseBody            []byte
-	ResponseBodyTruncated   bool
+	RequestHeaders        map[string][]string
+	RequestBody           []byte
+	RequestBodyTruncated  bool
+	ResponseHeaders       map[string][]string
+	ResponseBody          []byte
+	ResponseBodyTruncated bool
 }
 
 // ConnectionInfo captures an observed TCP connection.
@@ -44,10 +44,10 @@ type GRPCCallInfo struct {
 	Source           string
 	Target           string
 	Ingress          string
-	Service          string              // "pkg.ServiceName"
-	Method           string              // "MethodName"
-	GRPCStatus       string              // "0" (OK), "5" (NOT_FOUND), etc.
-	GRPCMessage      string              // status message
+	Service          string // "pkg.ServiceName"
+	Method           string // "MethodName"
+	GRPCStatus       string // "0" (OK), "5" (NOT_FOUND), etc.
+	GRPCMessage      string // status message
 	LatencyMs        float64
 	RequestSize      int64
 	ResponseSize     int64
