@@ -1,20 +1,30 @@
 package server_test
 
 import (
-	"fmt"
 	"net"
 	"testing"
 
 	"github.com/matgreaves/rig/internal/server"
 )
 
+func listenersToPortsAndClose(t *testing.T, lns []net.Listener) []int {
+	t.Helper()
+	ports := make([]int, len(lns))
+	for i, ln := range lns {
+		ports[i] = ln.Addr().(*net.TCPAddr).Port
+		ln.Close()
+	}
+	return ports
+}
+
 func TestPortAllocator_AllocateReturnsUniquePorts(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	ports, err := alloc.Allocate("inst-1", 3)
+	lns, err := alloc.Allocate("inst-1", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ports := listenersToPortsAndClose(t, lns)
 	if len(ports) != 3 {
 		t.Fatalf("expected 3 ports, got %d", len(ports))
 	}
@@ -34,44 +44,57 @@ func TestPortAllocator_AllocateReturnsUniquePorts(t *testing.T) {
 func TestPortAllocator_AllocateZero(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	ports, err := alloc.Allocate("inst-1", 0)
+	lns, err := alloc.Allocate("inst-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ports != nil {
-		t.Errorf("expected nil for 0 ports, got %v", ports)
+	if lns != nil {
+		t.Errorf("expected nil for 0 ports, got %v", lns)
 	}
 }
 
-func TestPortAllocator_PortsAreBindable(t *testing.T) {
+func TestPortAllocator_ListenersAreOpen(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	ports, err := alloc.Allocate("inst-1", 2)
+	lns, err := alloc.Allocate("inst-1", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		for _, ln := range lns {
+			ln.Close()
+		}
+	}()
 
-	// Verify the ports are actually available by binding to them.
-	for _, port := range ports {
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	// Verify the listeners are actually open by accepting (with timeout).
+	for _, ln := range lns {
+		addr := ln.Addr().String()
+		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			t.Errorf("port %d not bindable: %v", port, err)
+			t.Errorf("listener at %s not connectable: %v", addr, err)
 			continue
 		}
-		ln.Close()
+		conn.Close()
 	}
 }
 
 func TestPortAllocator_TracksAllocations(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	_, err := alloc.Allocate("inst-1", 2)
+	lns1, err := alloc.Allocate("inst-1", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = alloc.Allocate("inst-2", 3)
+	for _, ln := range lns1 {
+		ln.Close()
+	}
+
+	lns2, err := alloc.Allocate("inst-2", 3)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, ln := range lns2 {
+		ln.Close()
 	}
 
 	if alloc.Allocated() != 5 {
@@ -82,13 +105,20 @@ func TestPortAllocator_TracksAllocations(t *testing.T) {
 func TestPortAllocator_Release(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	_, err := alloc.Allocate("inst-1", 2)
+	lns1, err := alloc.Allocate("inst-1", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = alloc.Allocate("inst-2", 3)
+	for _, ln := range lns1 {
+		ln.Close()
+	}
+
+	lns2, err := alloc.Allocate("inst-2", 3)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, ln := range lns2 {
+		ln.Close()
 	}
 
 	alloc.Release("inst-1")
@@ -118,17 +148,19 @@ func TestPortAllocator_ReleaseNonexistent(t *testing.T) {
 func TestPortAllocator_MultipleInstancesGetDifferentPorts(t *testing.T) {
 	alloc := server.NewPortAllocator()
 
-	ports1, err := alloc.Allocate("inst-1", 5)
+	lns1, err := alloc.Allocate("inst-1", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ports1 := listenersToPortsAndClose(t, lns1)
 
-	ports2, err := alloc.Allocate("inst-2", 5)
+	lns2, err := alloc.Allocate("inst-2", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ports2 := listenersToPortsAndClose(t, lns2)
 
-	// All 10 ports should be unique (OS guarantees this, but verify).
+	// All 10 ports should be unique.
 	seen := make(map[int]bool)
 	for _, p := range ports1 {
 		seen[p] = true

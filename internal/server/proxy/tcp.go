@@ -12,7 +12,7 @@ import (
 
 // runTCP starts a TCP relay that captures connection metadata.
 func (f *Forwarder) runTCP(ctx context.Context) error {
-	ln, err := net.Listen("tcp", f.listenAddr())
+	ln, err := f.getListener()
 	if err != nil {
 		return fmt.Errorf("proxy %s→%s: listen: %w", f.Source, f.TargetSvc, err)
 	}

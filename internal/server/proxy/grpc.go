@@ -37,7 +37,7 @@ func (f *Forwarder) runGRPC(ctx context.Context) error {
 		getDecoder: func() *grpcDecoder { return f.Decoder },
 	}
 
-	ln, err := net.Listen("tcp", f.listenAddr())
+	ln, err := f.getListener()
 	if err != nil {
 		return fmt.Errorf("proxy %s→%s: listen: %w", f.Source, f.TargetSvc, err)
 	}

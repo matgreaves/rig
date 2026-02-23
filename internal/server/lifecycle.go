@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -102,9 +103,17 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			return nil
 		}
 
-		allocated, err := ports.Allocate(sc.instanceID, n)
+		listeners, err := ports.Allocate(sc.instanceID, n)
 		if err != nil {
 			return fmt.Errorf("allocate ports: %w", err)
+		}
+
+		// Close listeners — service ports are used by external processes that
+		// need to bind themselves. Extract the port numbers first.
+		svcPorts := make([]int, n)
+		for i, ln := range listeners {
+			svcPorts[i] = ln.Addr().(*net.TCPAddr).Port
+			ln.Close()
 		}
 
 		// Sort ingress names for deterministic port assignment.
@@ -116,7 +125,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 
 		portMap := make(map[string]int, n)
 		for i, name := range ingressNames {
-			portMap[name] = allocated[i]
+			portMap[name] = svcPorts[i]
 		}
 
 		endpoints, err := sc.svcType.Publish(ctx, service.PublishParams{
@@ -145,20 +154,22 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 		// When observing, create one external proxy per ingress so that
 		// env.Endpoint() returns a proxy address instead of the real one.
 		if sc.observe {
-			proxyPorts, err := ports.Allocate(sc.instanceID, len(endpoints))
+			proxyListeners, err := ports.Allocate(sc.instanceID, len(endpoints))
 			if err != nil {
 				return fmt.Errorf("allocate external proxy ports: %w", err)
 			}
 			i := 0
 			for ingressName, ep := range endpoints {
+				ln := proxyListeners[i]
 				fwd := &proxy.Forwarder{
-					ListenPort: proxyPorts[i],
+					ListenPort: ln.Addr().(*net.TCPAddr).Port,
 					Target:     ep,
 					Source:     "external",
 					TargetSvc:  sc.name,
 					Ingress:    ingressName,
 					Protocol:   string(ep.Protocol),
 					Emit:       proxyEmitter(sc),
+					Listener:   ln,
 				}
 				sc.forwarders = append(sc.forwarders, fwd)
 
@@ -218,19 +229,21 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 
 			if sc.observe {
 				// Create an egress proxy so the service talks through the proxy.
-				proxyPorts, err := ports.Allocate(sc.instanceID, 1)
+				proxyListeners, err := ports.Allocate(sc.instanceID, 1)
 				if err != nil {
 					return fmt.Errorf("allocate egress proxy port for %q: %w",
 						egressName, err)
 				}
+				ln := proxyListeners[0]
 				fwd := &proxy.Forwarder{
-					ListenPort: proxyPorts[0],
+					ListenPort: ln.Addr().(*net.TCPAddr).Port,
 					Target:     realEndpoint,
 					Source:     sc.name,
 					TargetSvc:  targetService,
 					Ingress:    targetIngress,
 					Protocol:   string(realEndpoint.Protocol),
 					Emit:       proxyEmitter(sc),
+					Listener:   ln,
 				}
 				sc.forwarders = append(sc.forwarders, fwd)
 				sc.egresses[egressName] = fwd.Endpoint()

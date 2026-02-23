@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -37,7 +36,7 @@ func (f *Forwarder) runHTTP(ctx context.Context) error {
 		ingress: f.Ingress,
 	}
 
-	ln, err := net.Listen("tcp", f.listenAddr())
+	ln, err := f.getListener()
 	if err != nil {
 		return fmt.Errorf("proxy %s→%s: listen: %w", f.Source, f.TargetSvc, err)
 	}
