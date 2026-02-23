@@ -2,6 +2,7 @@ package orderflow
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type Handler struct {
 	Pool     *pgxpool.Pool
 	Temporal client.Client
+	Log      *slog.Logger
 }
 
 // Routes registers all HTTP routes on the given mux.
@@ -56,6 +58,8 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	h.Log.Info("order created", "id", order.ID, "customer", order.Customer, "items", len(order.Items))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

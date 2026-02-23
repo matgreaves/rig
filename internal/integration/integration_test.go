@@ -15,6 +15,7 @@ import (
 	"time"
 
 	rig "github.com/matgreaves/rig/client"
+	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/connect/httpx"
 	"github.com/matgreaves/rig/internal/server"
 	"github.com/matgreaves/rig/internal/server/service"
@@ -1021,6 +1022,68 @@ func TestObserveGRPC(t *testing.T) {
 	}
 	if !found {
 		t.Error("no grpc.call.completed event found for grpc.health.v1.Health/Check")
+	}
+}
+
+// TestFuncLogWriter verifies that connect.LogWriter ships Func service logs
+// to rigd's event timeline.
+func TestFuncLogWriter(t *testing.T) {
+	t.Parallel()
+	serverURL := sharedServerURL
+
+	env := rig.Up(t, rig.Services{
+		"logger": rig.Func(func(ctx context.Context) error {
+			w := connect.LogWriter(ctx)
+			fmt.Fprintln(w, "hello from func")
+			fmt.Fprintln(w, "second line")
+			return httpx.ListenAndServe(ctx, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+				rw.WriteHeader(http.StatusOK)
+			}))
+		}),
+	}, rig.WithServer(serverURL), rig.WithTimeout(30*time.Second))
+
+	// Hit the service to confirm it's up.
+	resp, err := http.Get("http://" + env.Endpoint("logger").Addr() + "/")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp.Body.Close()
+
+	// Give the log writer a moment to flush.
+	time.Sleep(200 * time.Millisecond)
+
+	// Fetch the event log and verify service.log events.
+	logResp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer logResp.Body.Close()
+
+	var events []struct {
+		Type    string `json:"type"`
+		Service string `json:"service"`
+		Log     *struct {
+			Stream string `json:"stream"`
+			Data   string `json:"data"`
+		} `json:"log,omitempty"`
+	}
+	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	// Collect all log data — lines may be batched into fewer events.
+	var allData string
+	for _, e := range events {
+		if e.Type == "service.log" && e.Service == "logger" && e.Log != nil {
+			allData += e.Log.Data + "\n"
+		}
+	}
+
+	if !strings.Contains(allData, "hello from func") {
+		t.Errorf("log output missing 'hello from func': %s", allData)
+	}
+	if !strings.Contains(allData, "second line") {
+		t.Errorf("log output missing 'second line': %s", allData)
 	}
 }
 

@@ -325,11 +325,17 @@ func dispatchStartCallback(
 
 	// Build wiring and inject into context.
 	wiring := convertWiring(cb.Wiring)
-	wiringCtx := connect.WithWiring(funcCtx, &wiring)
+	svcCtx := connect.WithWiring(funcCtx, &wiring)
+
+	// Inject a log writer so the service can ship logs to rigd.
+	lw := newLogWriter(serverURL, envID, serviceName)
+	svcCtx = connect.WithLogWriter(svcCtx, lw)
 
 	// Launch the function in a goroutine — it runs until funcCtx is cancelled.
 	go func() {
-		if err := handler(wiringCtx); err != nil && funcCtx.Err() == nil {
+		err := handler(svcCtx)
+		lw.Flush() // send any buffered partial line
+		if err != nil && funcCtx.Err() == nil {
 			// Function failed before cleanup — report to server so it can
 			// fail the service and tear down the environment.
 			postServiceError(serverURL, envID, serviceName, err)
