@@ -151,23 +151,23 @@ func WithObserve() Option {
 // Up calls t.Fatal with a descriptive error message.
 func Up(t testing.TB, services Services, opts ...Option) *Environment {
 	t.Helper()
-	env, err := up(t, services, opts...)
+	env, err := TryUp(t, services, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return env
 }
 
-// up is the internal implementation of Up. It returns an error instead of
-// calling t.Fatal, making it testable for expected-failure cases.
-func up(t testing.TB, services Services, opts ...Option) (*Environment, error) {
+// TryUp is like Up but returns an error instead of calling t.Fatal. Use this
+// to test expected-failure scenarios.
+func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error) {
 	o := defaultOptions()
 	for _, opt := range opts {
 		opt(&o)
 	}
 
 	if o.serverURL == "" {
-		addr, err := ensureServer("")
+		addr, err := EnsureServer("")
 		if err != nil {
 			return nil, fmt.Errorf("rig: %w", err)
 		}
