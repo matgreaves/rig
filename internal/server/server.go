@@ -214,8 +214,12 @@ type clientEvent struct {
 	Error     string         `json:"error,omitempty"`
 	Data      map[string]any `json:"data,omitempty"`
 
-	// service.error fields
+	// service.error / service.log fields
 	Service string `json:"service,omitempty"`
+
+	// service.log fields
+	Stream  string `json:"stream,omitempty"`   // "stdout" or "stderr"
+	LogData string `json:"log_data,omitempty"` // log line content
 }
 
 // handleClientEvent handles POST /environments/{id}/events.
@@ -224,6 +228,7 @@ type clientEvent struct {
 // field determines how the event is processed:
 //   - "callback.response": unblocks a waiting lifecycle step
 //   - "service.error": marks a client-side service as failed
+//   - "service.log": captures a log line from a client-side (Func) service
 //   - "test.note": records a test assertion or diagnostic message
 func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 	inst, ok := s.getInstance(w, r)
@@ -256,6 +261,21 @@ func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 			Environment: inst.spec.Name,
 			Service:     ev.Service,
 			Error:       ev.Error,
+		})
+
+	case "service.log":
+		stream := ev.Stream
+		if stream == "" {
+			stream = "stdout"
+		}
+		inst.log.Publish(Event{
+			Type:        EventServiceLog,
+			Environment: inst.spec.Name,
+			Service:     ev.Service,
+			Log: &LogEntry{
+				Stream: stream,
+				Data:   ev.LogData,
+			},
 		})
 
 	case "test.note":

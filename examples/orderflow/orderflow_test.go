@@ -12,20 +12,38 @@ import (
 	"github.com/matgreaves/rig/examples/orderflow"
 )
 
-func setupEnv(t *testing.T) *rig.Environment {
-	t.Helper()
-	return rig.Up(t, rig.Services{
+func services() rig.Services {
+	return rig.Services{
 		"db":       rig.Postgres().InitSQLDir("./migrations"),
 		"temporal": rig.Temporal(),
 		"api": rig.Go("./cmd/orderflow").
 			Egress("db").
 			Egress("temporal"),
-	})
+	}
 }
 
 func TestOrderFlow(t *testing.T) {
 	t.Parallel()
-	env := setupEnv(t)
+
+	t.Run("Go", func(t *testing.T) {
+		t.Parallel()
+		env := rig.Up(t, services())
+		testOrderFlow(t, env)
+	})
+
+	t.Run("Func", func(t *testing.T) {
+		t.Parallel()
+		svc := services()
+		svc["api"] = rig.Func(orderflow.Run).
+			Egress("db").
+			Egress("temporal")
+		env := rig.Up(t, svc)
+		testOrderFlow(t, env)
+	})
+}
+
+func testOrderFlow(t *testing.T, env *rig.Environment) {
+	t.Helper()
 	api := httpx.New(env.Endpoint("api"))
 
 	// POST /orders — create a new order.
