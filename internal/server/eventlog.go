@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -136,6 +137,13 @@ type GRPCCallInfo struct {
 	ResponseSize     int64               `json:"response_size"`
 	RequestMetadata  map[string][]string `json:"request_metadata,omitempty"`
 	ResponseMetadata map[string][]string `json:"response_metadata,omitempty"`
+
+	RequestBody           []byte          `json:"request_body,omitempty"`
+	RequestBodyTruncated  bool            `json:"request_body_truncated,omitempty"`
+	ResponseBody          []byte          `json:"response_body,omitempty"`
+	ResponseBodyTruncated bool            `json:"response_body_truncated,omitempty"`
+	RequestBodyDecoded    json.RawMessage `json:"request_body_decoded,omitempty"`
+	ResponseBodyDecoded   json.RawMessage `json:"response_body_decoded,omitempty"`
 }
 
 // Event is a single entry in the event log.

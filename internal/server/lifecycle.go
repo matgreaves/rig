@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,6 +316,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 		lifecycle := run.Sequence{
 			readyCheckRunner(sc),
 			emitEvent(sc, EventServiceHealthy),
+			reflectionProbeStep(sc),
 			initRunner(sc),
 			emitEvent(sc, EventServiceReady),
 			run.Idle,
@@ -374,6 +376,25 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec, onFailure); err != nil {
 				return fmt.Errorf("ingress %q: %w", ingressName, err)
 			}
+		}
+		return nil
+	})
+}
+
+// reflectionProbeStep probes gRPC forwarders for server reflection support.
+// Called after the service is healthy so the probe gets an immediate answer.
+// Sets fwd.Decoder for any forwarder whose target supports reflection.
+func reflectionProbeStep(sc *serviceContext) run.Runner {
+	return run.Func(func(ctx context.Context) error {
+		if !sc.observe {
+			return nil
+		}
+		for _, fwd := range sc.forwarders {
+			if fwd.Protocol != "grpc" {
+				continue
+			}
+			addr := fmt.Sprintf("%s:%d", fwd.Target.Host, fwd.Target.Port)
+			fwd.Decoder = proxy.ProbeReflection(ctx, addr)
 		}
 		return nil
 	})
@@ -562,20 +583,31 @@ func proxyEmitter(sc *serviceContext) func(proxy.Event) {
 			}
 		}
 		if pe.GRPCCall != nil {
-			ev.GRPCCall = &GRPCCallInfo{
-				Source:           pe.GRPCCall.Source,
-				Target:           pe.GRPCCall.Target,
-				Ingress:          pe.GRPCCall.Ingress,
-				Service:          pe.GRPCCall.Service,
-				Method:           pe.GRPCCall.Method,
-				GRPCStatus:       pe.GRPCCall.GRPCStatus,
-				GRPCMessage:      pe.GRPCCall.GRPCMessage,
-				LatencyMs:        pe.GRPCCall.LatencyMs,
-				RequestSize:      pe.GRPCCall.RequestSize,
-				ResponseSize:     pe.GRPCCall.ResponseSize,
-				RequestMetadata:  pe.GRPCCall.RequestMetadata,
-				ResponseMetadata: pe.GRPCCall.ResponseMetadata,
+			info := &GRPCCallInfo{
+				Source:                pe.GRPCCall.Source,
+				Target:                pe.GRPCCall.Target,
+				Ingress:               pe.GRPCCall.Ingress,
+				Service:               pe.GRPCCall.Service,
+				Method:                pe.GRPCCall.Method,
+				GRPCStatus:            pe.GRPCCall.GRPCStatus,
+				GRPCMessage:           pe.GRPCCall.GRPCMessage,
+				LatencyMs:             pe.GRPCCall.LatencyMs,
+				RequestSize:           pe.GRPCCall.RequestSize,
+				ResponseSize:          pe.GRPCCall.ResponseSize,
+				RequestMetadata:       pe.GRPCCall.RequestMetadata,
+				ResponseMetadata:      pe.GRPCCall.ResponseMetadata,
+				RequestBody:           pe.GRPCCall.RequestBody,
+				RequestBodyTruncated:  pe.GRPCCall.RequestBodyTruncated,
+				ResponseBody:          pe.GRPCCall.ResponseBody,
+				ResponseBodyTruncated: pe.GRPCCall.ResponseBodyTruncated,
 			}
+			if pe.GRPCCall.RequestBodyDecoded != "" {
+				info.RequestBodyDecoded = json.RawMessage(pe.GRPCCall.RequestBodyDecoded)
+			}
+			if pe.GRPCCall.ResponseBodyDecoded != "" {
+				info.ResponseBodyDecoded = json.RawMessage(pe.GRPCCall.ResponseBodyDecoded)
+			}
+			ev.GRPCCall = info
 		}
 		sc.log.Publish(ev)
 	}

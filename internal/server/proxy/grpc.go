@@ -30,10 +30,11 @@ func (f *Forwarder) runGRPC(ctx context.Context) error {
 				return (&net.Dialer{}).DialContext(ctx, network, addr)
 			},
 		},
-		emit:    f.Emit,
-		source:  f.Source,
-		target:  f.TargetSvc,
-		ingress: f.Ingress,
+		emit:       f.Emit,
+		source:     f.Source,
+		target:     f.TargetSvc,
+		ingress:    f.Ingress,
+		getDecoder: func() *grpcDecoder { return f.Decoder },
 	}
 
 	ln, err := net.Listen("tcp", f.listenAddr())

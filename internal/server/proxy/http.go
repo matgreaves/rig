@@ -58,11 +58,12 @@ func (f *Forwarder) runHTTP(ctx context.Context) error {
 
 // observingTransport wraps an http.RoundTripper to capture headers and bodies.
 type observingTransport struct {
-	inner   http.RoundTripper
-	emit    func(Event)
-	source  string
-	target  string
-	ingress string
+	inner      http.RoundTripper
+	emit       func(Event)
+	source     string
+	target     string
+	ingress    string
+	getDecoder func() *grpcDecoder // returns decoder lazily; nil means no decoding
 }
 
 func (t *observingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -145,28 +146,40 @@ func (t *observingTransport) observeGRPC(
 	svc, method := parseGRPCPath(req.URL.Path)
 	respCapture := &cappedBuffer{max: maxBodyCapture}
 
+	getDecoder := t.getDecoder // capture for closure
 	resp.Body = &observedGRPCBody{
 		reader:  io.TeeReader(resp.Body, respCapture),
 		closer:  resp.Body,
 		resp:    resp,
 		capture: respCapture,
 		emit: func(grpcStatus, grpcMessage string, respMeta map[string][]string) {
+			info := &GRPCCallInfo{
+				Source:                t.source,
+				Target:                t.target,
+				Ingress:               t.ingress,
+				Service:               svc,
+				Method:                method,
+				GRPCStatus:            grpcStatus,
+				GRPCMessage:           grpcMessage,
+				LatencyMs:             float64(latency.Microseconds()) / 1000.0,
+				RequestSize:           reqCapture.total,
+				ResponseSize:          respCapture.total,
+				RequestMetadata:       reqHeaders,
+				ResponseMetadata:      respMeta,
+				RequestBody:           reqCapture.bytes(),
+				RequestBodyTruncated:  reqCapture.truncated,
+				ResponseBody:          respCapture.bytes(),
+				ResponseBodyTruncated: respCapture.truncated,
+			}
+			if getDecoder != nil {
+				if d := getDecoder(); d != nil {
+					info.RequestBodyDecoded = d.Decode(svc, method, reqCapture.bytes(), true)
+					info.ResponseBodyDecoded = d.Decode(svc, method, respCapture.bytes(), false)
+				}
+			}
 			t.emit(Event{
-				Type: "grpc.call.completed",
-				GRPCCall: &GRPCCallInfo{
-					Source:           t.source,
-					Target:           t.target,
-					Ingress:          t.ingress,
-					Service:          svc,
-					Method:           method,
-					GRPCStatus:       grpcStatus,
-					GRPCMessage:      grpcMessage,
-					LatencyMs:        float64(latency.Microseconds()) / 1000.0,
-					RequestSize:      reqCapture.total,
-					ResponseSize:     respCapture.total,
-					RequestMetadata:  reqHeaders,
-					ResponseMetadata: respMeta,
-				},
+				Type:     "grpc.call.completed",
+				GRPCCall: info,
 			})
 		},
 	}
