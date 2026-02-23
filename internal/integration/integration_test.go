@@ -21,6 +21,8 @@ import (
 	"github.com/matgreaves/rig/internal/testdata/services/echo"
 )
 
+var sharedServerURL string
+
 // moduleRoot returns the internal module root by finding go.mod relative to
 // the test working directory.
 func moduleRoot(t testing.TB) string {
@@ -42,11 +44,26 @@ func moduleRoot(t testing.TB) string {
 	}
 }
 
-// startTestServer creates an httptest.Server backed by a real server.Server
-// with process, go, and client service types registered. Returns the server URL.
-// Uses .rig/ in the repo root for cache and logs.
-func startTestServer(t testing.TB) string {
-	t.Helper()
+func TestMain(m *testing.M) {
+	// Find module root without testing.TB.
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "getwd: %v\n", err)
+		os.Exit(1)
+	}
+	dir := wd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			fmt.Fprintf(os.Stderr, "could not find go.mod\n")
+			os.Exit(1)
+		}
+		dir = parent
+	}
+
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
@@ -55,18 +72,28 @@ func startTestServer(t testing.TB) string {
 	reg.Register("postgres", service.Postgres{})
 	reg.Register("temporal", service.Temporal{})
 
-	// .rig lives in the repo root (one level above internal/)
-	rigDir := filepath.Join(moduleRoot(t), "..", ".rig")
+	rigDir := filepath.Join(dir, "..", ".rig")
+	tmpDir, err := os.MkdirTemp("", "rig-integration-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tmpdir: %v\n", err)
+		os.Exit(1)
+	}
+
 	s := server.NewServer(
 		server.NewPortAllocator(),
 		reg,
-		t.TempDir(),
+		tmpDir,
 		0, // idle timeout disabled
 		rigDir,
 	)
 	ts := httptest.NewServer(s)
-	t.Cleanup(ts.Close)
-	return ts.URL
+	sharedServerURL = ts.URL
+
+	code := m.Run()
+
+	ts.Close()
+	os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
 
 // repoRoot returns the top-level repo directory (parent of internal/).
@@ -78,8 +105,9 @@ func repoRoot(t testing.TB) string {
 // TestUp runs all integration tests against a shared rig server. Each subtest
 // creates its own environment in parallel — exactly how real users would use rig.
 func TestUp(t *testing.T) {
+	t.Parallel()
 	root := repoRoot(t)
-	serverURL := startTestServer(t)
+	serverURL := sharedServerURL
 
 	t.Run("GoService", func(t *testing.T) {
 		t.Parallel()
@@ -558,8 +586,7 @@ func TestUp(t *testing.T) {
 		// the exec hook races with container creation and fails because the
 		// container doesn't exist yet when docker exec is called.
 		env := rig.Up(t, rig.Services{
-			"box": rig.Container("alpine:latest").
-				Cmd("sh", "-c", "sleep 300").
+			"box": rig.Container("nginx:alpine").
 				NoIngress().
 				Exec("sh", "-c", "echo hello > /tmp/exec-test"),
 		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
@@ -654,7 +681,7 @@ type user struct {
 // events in the server's event log.
 func TestWrappedTB(t *testing.T) {
 	t.Parallel()
-	serverURL := startTestServer(t)
+	serverURL := sharedServerURL
 
 	// Post a test.note event directly and verify it appears in the log.
 	// We avoid using env.T.Errorf in the main test because it would mark
@@ -710,7 +737,7 @@ func TestWrappedTB(t *testing.T) {
 // and captures request events in the event log.
 func TestObserve(t *testing.T) {
 	t.Parallel()
-	serverURL := startTestServer(t)
+	serverURL := sharedServerURL
 
 	// Two services: api (Func) depends on backend (Func).
 	// Both are HTTP so we get request.completed events.
@@ -804,7 +831,7 @@ func TestObserve(t *testing.T) {
 func TestObserveTCP(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
-	serverURL := startTestServer(t)
+	serverURL := sharedServerURL
 
 	env := rig.Up(t, rig.Services{
 		"tcpecho": rig.Go(filepath.Join(root, "internal", "testdata", "services", "tcpecho")).

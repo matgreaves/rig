@@ -14,7 +14,7 @@ import (
 // rig-managed echo service, comparing direct (observe=false) vs proxied
 // (observe=true) paths.
 func BenchmarkRequestThroughput(b *testing.B) {
-	serverURL := startTestServer(b)
+	serverURL := sharedServerURL
 
 	for _, observe := range []bool{false, true} {
 		name := "observe=false"
