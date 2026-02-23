@@ -30,7 +30,7 @@ type serviceContext struct {
 	log        *EventLog
 	envName    string
 	instanceID string
-	observe    bool                // when true, create proxy forwarders
+	observe    bool               // when true, create proxy forwarders
 	forwarders []*proxy.Forwarder // populated during publish/wiring when observing
 }
 

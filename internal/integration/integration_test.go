@@ -972,17 +972,17 @@ func TestObserveGRPC(t *testing.T) {
 	var events []struct {
 		Type     string `json:"type"`
 		GRPCCall *struct {
-			Source              string          `json:"source"`
-			Target              string          `json:"target"`
-			Service             string          `json:"service"`
-			Method              string          `json:"method"`
-			GRPCStatus          string          `json:"grpc_status"`
-			RequestBody         []byte          `json:"request_body,omitempty"`
-			RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
-			ResponseBody        []byte          `json:"response_body,omitempty"`
-			ResponseBodyTruncated bool          `json:"response_body_truncated,omitempty"`
-			RequestBodyDecoded  json.RawMessage `json:"request_body_decoded,omitempty"`
-			ResponseBodyDecoded json.RawMessage `json:"response_body_decoded,omitempty"`
+			Source                string          `json:"source"`
+			Target                string          `json:"target"`
+			Service               string          `json:"service"`
+			Method                string          `json:"method"`
+			GRPCStatus            string          `json:"grpc_status"`
+			RequestBody           []byte          `json:"request_body,omitempty"`
+			RequestBodyTruncated  bool            `json:"request_body_truncated,omitempty"`
+			ResponseBody          []byte          `json:"response_body,omitempty"`
+			ResponseBodyTruncated bool            `json:"response_body_truncated,omitempty"`
+			RequestBodyDecoded    json.RawMessage `json:"request_body_decoded,omitempty"`
+			ResponseBodyDecoded   json.RawMessage `json:"response_body_decoded,omitempty"`
 		} `json:"grpc_call,omitempty"`
 	}
 	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {

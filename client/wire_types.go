@@ -16,12 +16,12 @@ type specEnvironment struct {
 }
 
 type specService struct {
-	Type      string                       `json:"type"`
-	Config    json.RawMessage              `json:"config,omitempty"`
-	Args      []string                     `json:"args,omitempty"`
-	Ingresses map[string]specIngressSpec   `json:"ingresses,omitempty"`
-	Egresses  map[string]specEgressSpec    `json:"egresses,omitempty"`
-	Hooks     *specHooks                   `json:"hooks,omitempty"`
+	Type      string                     `json:"type"`
+	Config    json.RawMessage            `json:"config,omitempty"`
+	Args      []string                   `json:"args,omitempty"`
+	Ingresses map[string]specIngressSpec `json:"ingresses,omitempty"`
+	Egresses  map[string]specEgressSpec  `json:"egresses,omitempty"`
+	Hooks     *specHooks                 `json:"hooks,omitempty"`
 }
 
 type specHooks struct {

@@ -113,4 +113,3 @@ func (d Download) Resolve(ctx context.Context, outputDir string) (Output, error)
 
 // Retryable returns true — downloads are network operations.
 func (d Download) Retryable() bool { return true }
-

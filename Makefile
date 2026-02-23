@@ -1,4 +1,4 @@
-.PHONY: build build-all test clean clean-bin clean-logs clean-cache
+.PHONY: build build-all test fmt clean clean-bin clean-logs clean-cache
 
 PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 
@@ -19,6 +19,10 @@ test: build
 	RIG_BINARY=$(CURDIR)/bin/rigd RIG_DIR=$(CURDIR)/.rig go test ./...
 	cd internal && RIG_BINARY=$(CURDIR)/bin/rigd RIG_DIR=$(CURDIR)/.rig go test ./...
 	cd examples && RIG_BINARY=$(CURDIR)/bin/rigd RIG_DIR=$(CURDIR)/.rig go test ./... -count=1
+
+# Format all Go source across all modules
+fmt:
+	gofmt -w .
 
 # Remove build artifacts, logs, and cache
 clean: clean-bin clean-logs clean-cache

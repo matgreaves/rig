@@ -11,9 +11,9 @@ import (
 func DecodeEnvironment(data []byte) (Environment, error) {
 	// First, check for duplicate service names.
 	var raw struct {
-		Name     string                      `json:"name"`
-		Services map[string]json.RawMessage  `json:"services"`
-		Observe  bool                        `json:"observe"`
+		Name     string                     `json:"name"`
+		Services map[string]json.RawMessage `json:"services"`
+		Observe  bool                       `json:"observe"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Environment{}, err
@@ -103,4 +103,3 @@ func checkObjectDuplicates(dec *json.Decoder, context string) error {
 
 	return nil
 }
-

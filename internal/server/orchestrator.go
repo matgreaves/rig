@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/service"
@@ -23,6 +24,7 @@ type Orchestrator struct {
 	Log      *EventLog
 	TempBase string // base directory for temp dirs (default os.TempDir()/rig)
 	CacheDir string // artifact cache directory (default ~/.rig/cache/)
+	Preserve *bool  // when non-nil and true, skip temp dir cleanup on exit
 }
 
 // Orchestrate builds a run.Runner that manages the full lifecycle of the
@@ -38,7 +40,7 @@ type Orchestrator struct {
 // If either phase fails, the runner emits environment.failing with the root
 // cause before returning. The results map is safe to share because the
 // artifact phase completes before the service phase begins.
-func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, error) {
+func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, string, error) {
 	// Generate instance ID.
 	instanceID := generateID()
 
@@ -47,7 +49,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	envDir := filepath.Join(o.tempBase(), instanceID)
 	serviceNames := sortedServiceNames(env.Services)
 	if err := createTempDirs(envDir, serviceNames); err != nil {
-		return nil, "", fmt.Errorf("create temp dirs: %w", err)
+		return nil, "", "", fmt.Errorf("create temp dirs: %w", err)
 	}
 	cancelTempCleanup, _ := onexit.OnExitF("rm -rf %s", envDir)
 
@@ -57,7 +59,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 		svc := env.Services[name]
 		svcType, err := o.Registry.Get(svc.Type)
 		if err != nil {
-			return nil, "", fmt.Errorf("service %q: %w", name, err)
+			return nil, "", "", fmt.Errorf("service %q: %w", name, err)
 		}
 		if provider, ok := svcType.(service.ArtifactProvider); ok {
 			arts, err := provider.Artifacts(service.ArtifactParams{
@@ -65,7 +67,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 				Spec:        svc,
 			})
 			if err != nil {
-				return nil, "", fmt.Errorf("service %q: artifacts: %w", name, err)
+				return nil, "", "", fmt.Errorf("service %q: artifacts: %w", name, err)
 			}
 			allArtifacts = append(allArtifacts, arts...)
 		}
@@ -117,6 +119,8 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	servicePhase := run.Func(func(ctx context.Context) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
+
+		go progressWatchdog(ctx, o.Log, env.Name, env.Services, 30*time.Second)
 
 		type serviceErr struct {
 			name string
@@ -175,8 +179,14 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 	})
 
 	lifecycle := run.Func(func(ctx context.Context) error {
-		// Clean up temp dirs when the lifecycle exits, regardless of outcome.
+		// Clean up temp dirs when the lifecycle exits, unless preserve is set.
 		defer func() {
+			if o.Preserve != nil && *o.Preserve {
+				if cancelTempCleanup != nil {
+					cancelTempCleanup()
+				}
+				return
+			}
 			os.RemoveAll(envDir)
 			if cancelTempCleanup != nil {
 				cancelTempCleanup()
@@ -207,7 +217,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, e
 		return nil
 	})
 
-	return lifecycle, instanceID, nil
+	return lifecycle, instanceID, envDir, nil
 }
 
 func (o *Orchestrator) tempBase() string {

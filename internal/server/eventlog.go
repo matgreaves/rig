@@ -50,12 +50,15 @@ const (
 	// Health checks.
 	EventHealthCheckFailed EventType = "health.check_failed"
 
+	// Progress diagnostics.
+	EventProgressStall EventType = "progress.stall"
+
 	// Traffic observation.
-	EventRequestCompleted   EventType = "request.completed"
-	EventConnectionOpened   EventType = "connection.opened"
-	EventConnectionClosed   EventType = "connection.closed"
-	EventProxyPublished     EventType = "proxy.published"
-	EventGRPCCallCompleted  EventType = "grpc.call.completed"
+	EventRequestCompleted  EventType = "request.completed"
+	EventConnectionOpened  EventType = "connection.opened"
+	EventConnectionClosed  EventType = "connection.closed"
+	EventProxyPublished    EventType = "proxy.published"
+	EventGRPCCallCompleted EventType = "grpc.call.completed"
 )
 
 // LogEntry holds a line of service output.
@@ -121,15 +124,29 @@ type ConnectionInfo struct {
 	DurationMs float64 `json:"duration_ms"`
 }
 
+// DiagnosticSnapshot captures the state of all services when a progress stall
+// is detected. Published as part of a progress.stall event.
+type DiagnosticSnapshot struct {
+	StalledFor string            `json:"stalled_for"`
+	Services   []ServiceSnapshot `json:"services"`
+}
+
+// ServiceSnapshot describes a single service's state in a diagnostic snapshot.
+type ServiceSnapshot struct {
+	Name      string   `json:"name"`
+	Phase     string   `json:"phase"`
+	WaitingOn []string `json:"waiting_on,omitempty"`
+}
+
 // GRPCCallInfo captures an observed gRPC call.
 type GRPCCallInfo struct {
 	Source           string              `json:"source"`
 	Target           string              `json:"target"`
 	Ingress          string              `json:"ingress"`
-	Service          string              `json:"service"`           // "pkg.ServiceName"
-	Method           string              `json:"method"`            // "MethodName"
-	GRPCStatus       string              `json:"grpc_status"`       // "0" (OK), "5" (NOT_FOUND), etc.
-	GRPCMessage      string              `json:"grpc_message"`      // status message
+	Service          string              `json:"service"`      // "pkg.ServiceName"
+	Method           string              `json:"method"`       // "MethodName"
+	GRPCStatus       string              `json:"grpc_status"`  // "0" (OK), "5" (NOT_FOUND), etc.
+	GRPCMessage      string              `json:"grpc_message"` // status message
 	LatencyMs        float64             `json:"latency_ms"`
 	RequestSize      int64               `json:"request_size"`
 	ResponseSize     int64               `json:"response_size"`
@@ -146,27 +163,30 @@ type GRPCCallInfo struct {
 
 // Event is a single entry in the event log.
 type Event struct {
-	Seq         uint64            `json:"seq"`
-	Type        EventType         `json:"type"`
-	Environment string            `json:"environment,omitempty"`
-	Service     string            `json:"service,omitempty"`
-	Ingress     string            `json:"ingress,omitempty"`
-	Endpoint    *spec.Endpoint    `json:"endpoint,omitempty"`
-	Artifact    string            `json:"artifact,omitempty"`
-	Log         *LogEntry         `json:"log,omitempty"`
-	Callback    *CallbackRequest  `json:"callback,omitempty"`
-	Result      *CallbackResponse `json:"result,omitempty"`
-	Error       string            `json:"error,omitempty"`
-	Request     *RequestInfo      `json:"request,omitempty"`
-	Connection  *ConnectionInfo   `json:"connection,omitempty"`
-	GRPCCall    *GRPCCallInfo     `json:"grpc_call,omitempty"`
+	Seq         uint64              `json:"seq"`
+	Type        EventType           `json:"type"`
+	Environment string              `json:"environment,omitempty"`
+	Service     string              `json:"service,omitempty"`
+	Ingress     string              `json:"ingress,omitempty"`
+	Endpoint    *spec.Endpoint      `json:"endpoint,omitempty"`
+	Artifact    string              `json:"artifact,omitempty"`
+	Log         *LogEntry           `json:"log,omitempty"`
+	Callback    *CallbackRequest    `json:"callback,omitempty"`
+	Result      *CallbackResponse   `json:"result,omitempty"`
+	Error       string              `json:"error,omitempty"`
+	Request     *RequestInfo        `json:"request,omitempty"`
+	Connection  *ConnectionInfo     `json:"connection,omitempty"`
+	GRPCCall    *GRPCCallInfo       `json:"grpc_call,omitempty"`
+	Diagnostic  *DiagnosticSnapshot `json:"diagnostic,omitempty"`
+	EnvDir      string              `json:"env_dir,omitempty"`
+	Message     string              `json:"message,omitempty"`
 	// Ingresses is populated on environment.up. It maps service name to a
 	// map of ingress name to endpoint, giving clients everything they need
 	// to connect to any service without a follow-up GET request.
 	// It uses spec.Endpoint directly — the same type client libraries are
 	// built against — so test and production wiring are handled identically.
 	Ingresses map[string]map[string]spec.Endpoint `json:"ingresses,omitempty"`
-	Timestamp time.Time                            `json:"timestamp"`
+	Timestamp time.Time                           `json:"timestamp"`
 }
 
 // EventLog is a persistent, ordered event log. Events are stored in two
