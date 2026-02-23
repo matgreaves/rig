@@ -22,12 +22,15 @@ type Forwarder struct {
 }
 
 // Endpoint returns the proxy endpoint that callers should connect to.
+// Address-derived attributes declared in Target.AddressAttrs are rewritten
+// to reflect the proxy's listen address.
 func (f *Forwarder) Endpoint() spec.Endpoint {
 	return spec.Endpoint{
-		Host:       "127.0.0.1",
-		Port:       f.ListenPort,
-		Protocol:   f.Target.Protocol,
-		Attributes: f.Target.Attributes,
+		Host:         "127.0.0.1",
+		Port:         f.ListenPort,
+		Protocol:     f.Target.Protocol,
+		Attributes:   spec.RewriteAddressAttrs(f.Target, "127.0.0.1", f.ListenPort),
+		AddressAttrs: f.Target.AddressAttrs,
 	}
 }
 

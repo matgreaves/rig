@@ -827,6 +827,38 @@ func TestObserve(t *testing.T) {
 	}
 }
 
+// TestObserveAttributes verifies that the observe proxy rewrites
+// address-derived endpoint attributes (TEMPORAL_ADDRESS) so that tools
+// reading env vars go through the proxy, not the real service.
+func TestObserveAttributes(t *testing.T) {
+	t.Parallel()
+	serverURL := sharedServerURL
+
+	env := rig.Up(t, rig.Services{
+		"temporal": rig.Temporal(),
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second), rig.WithObserve())
+
+	ep := env.Endpoint("temporal")
+
+	// TEMPORAL_ADDRESS must match the proxy endpoint, not the real service.
+	wantAddr := fmt.Sprintf("127.0.0.1:%d", ep.Port)
+	if got := ep.Attr("TEMPORAL_ADDRESS"); got != wantAddr {
+		t.Errorf("TEMPORAL_ADDRESS = %q, want %q (proxy address)", got, wantAddr)
+	}
+
+	// Non-address attrs should be unchanged.
+	if got := ep.Attr("TEMPORAL_NAMESPACE"); got != "default" {
+		t.Errorf("TEMPORAL_NAMESPACE = %q, want default", got)
+	}
+
+	// Verify TCP connectivity through the proxy.
+	conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("temporal dial through proxy: %v", err)
+	}
+	conn.Close()
+}
+
 // TestObserveTCP verifies TCP proxy captures connection events.
 func TestObserveTCP(t *testing.T) {
 	t.Parallel()

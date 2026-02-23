@@ -53,6 +53,9 @@ func (Temporal) Publish(_ context.Context, params PublishParams) (map[string]spe
 		}
 		ep.Attributes["TEMPORAL_ADDRESS"] = fmt.Sprintf("%s:%d", ep.Host, ep.Port)
 		ep.Attributes["TEMPORAL_NAMESPACE"] = cfg.Namespace
+		ep.AddressAttrs = map[string]spec.AddrAttr{
+			"TEMPORAL_ADDRESS": spec.AttrHostPort,
+		}
 		endpoints["default"] = ep
 	}
 	return endpoints, nil
