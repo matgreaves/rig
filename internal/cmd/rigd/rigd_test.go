@@ -56,6 +56,75 @@ func fileHash(t *testing.T, path string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
+func TestAddrFileFlag(t *testing.T) {
+	binDir := t.TempDir()
+	binPath := buildRigd(t, binDir)
+	rigDir := t.TempDir()
+	customAddrFile := filepath.Join(t.TempDir(), "rigd-v0.1.0.addr")
+
+	cmd := exec.Command(binPath, "--idle", "2s", "--rig-dir", rigDir, "--addr-file", customAddrFile)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start rigd: %v", err)
+	}
+
+	var exited atomic.Bool
+	done := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		exited.Store(true)
+		done <- err
+	}()
+	t.Cleanup(func() {
+		if !exited.Load() {
+			cmd.Process.Kill()
+			<-done
+		}
+	})
+
+	// Poll for custom addr file.
+	var addr string
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(customAddrFile); err == nil && len(data) > 0 {
+			addr = string(data)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if addr == "" {
+		t.Fatal("rigd did not write custom addr file within 10s")
+	}
+
+	// Default addr file should NOT exist.
+	defaultAddrFile := filepath.Join(rigDir, "rigd.addr")
+	if _, err := os.Stat(defaultAddrFile); err == nil {
+		t.Error("default addr file should not exist when --addr-file is set")
+	}
+
+	// Health check via custom addr.
+	resp, err := http.Get("http://" + addr + "/health")
+	if err != nil {
+		t.Fatalf("health check: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health: got %d, want 200", resp.StatusCode)
+	}
+
+	// Wait for idle shutdown.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("rigd did not shut down within 10s after idle timeout")
+	}
+
+	// Confirm custom addr file is removed after shutdown.
+	if _, err := os.Stat(customAddrFile); !os.IsNotExist(err) {
+		t.Error("custom addr file still exists after shutdown")
+	}
+}
+
 func TestRigdLifecycle(t *testing.T) {
 	binDir := t.TempDir()
 	binPath := buildRigd(t, binDir)
