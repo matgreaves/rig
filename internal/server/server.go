@@ -497,7 +497,9 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 	type edgeStats struct {
 		requests    int
 		connections int
+		grpcCalls   int
 		totalLatMs  float64
+		grpcLatMs   float64
 		bytesIn     int64
 		bytesOut    int64
 	}
@@ -542,6 +544,15 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 			s.connections++
 			s.bytesIn += c.BytesIn
 			s.bytesOut += c.BytesOut
+			continue
+		}
+		if e.Type == EventGRPCCallCompleted && e.GRPCCall != nil {
+			g := e.GRPCCall
+			fmt.Fprintf(&b, "\n  %5.2fs  %-22s %-10s → %-10s %s/%s  %s  %.1fms",
+				elapsed, e.Type, g.Source, g.Target, g.Service, g.Method, g.GRPCStatus, g.LatencyMs)
+			s := getEdge(g.Source, g.Target)
+			s.grpcCalls++
+			s.grpcLatMs += g.LatencyMs
 			continue
 		}
 		if e.Type == EventConnectionOpened || e.Type == EventProxyPublished {
@@ -597,6 +608,11 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 				avg := e.stats.totalLatMs / float64(e.stats.requests)
 				fmt.Fprintf(&b, "\n    %-10s → %-10s %d requests   avg %.1fms",
 					e.key.source, e.key.target, e.stats.requests, avg)
+			}
+			if e.stats.grpcCalls > 0 {
+				avg := e.stats.grpcLatMs / float64(e.stats.grpcCalls)
+				fmt.Fprintf(&b, "\n    %-10s → %-10s %d gRPC calls  avg %.1fms",
+					e.key.source, e.key.target, e.stats.grpcCalls, avg)
 			}
 			if e.stats.connections > 0 {
 				totalBytes := e.stats.bytesIn + e.stats.bytesOut

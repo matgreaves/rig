@@ -9,8 +9,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/grpc/codes"
 )
 
 // maxBodyCapture is the maximum number of body bytes captured per request or
@@ -81,6 +85,12 @@ func (t *observingTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 	latency := time.Since(start)
 
+	// Branch: gRPC uses trailers for status, needs different event shape.
+	ct := req.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "application/grpc") {
+		return t.observeGRPC(req, resp, reqCapture, reqHeaders, latency)
+	}
+
 	respHeaders := cloneHeaders(resp.Header)
 
 	path := req.URL.Path
@@ -120,6 +130,103 @@ func (t *observingTransport) RoundTrip(req *http.Request) (*http.Response, error
 	}
 
 	return resp, nil
+}
+
+// observeGRPC wraps the response body for a gRPC call, reading trailers on
+// close to extract grpc-status and grpc-message, then emitting a
+// grpc.call.completed event.
+func (t *observingTransport) observeGRPC(
+	req *http.Request,
+	resp *http.Response,
+	reqCapture *cappedBuffer,
+	reqHeaders map[string][]string,
+	latency time.Duration,
+) (*http.Response, error) {
+	svc, method := parseGRPCPath(req.URL.Path)
+	respCapture := &cappedBuffer{max: maxBodyCapture}
+
+	resp.Body = &observedGRPCBody{
+		reader:  io.TeeReader(resp.Body, respCapture),
+		closer:  resp.Body,
+		resp:    resp,
+		capture: respCapture,
+		emit: func(grpcStatus, grpcMessage string, respMeta map[string][]string) {
+			t.emit(Event{
+				Type: "grpc.call.completed",
+				GRPCCall: &GRPCCallInfo{
+					Source:           t.source,
+					Target:           t.target,
+					Ingress:          t.ingress,
+					Service:          svc,
+					Method:           method,
+					GRPCStatus:       grpcStatus,
+					GRPCMessage:      grpcMessage,
+					LatencyMs:        float64(latency.Microseconds()) / 1000.0,
+					RequestSize:      reqCapture.total,
+					ResponseSize:     respCapture.total,
+					RequestMetadata:  reqHeaders,
+					ResponseMetadata: respMeta,
+				},
+			})
+		},
+	}
+
+	return resp, nil
+}
+
+// observedGRPCBody wraps a gRPC response body. On Close it drains the body,
+// reads trailers for grpc-status/grpc-message, and emits the event.
+type observedGRPCBody struct {
+	reader  io.Reader
+	closer  io.Closer
+	resp    *http.Response
+	capture *cappedBuffer
+	emit    func(grpcStatus, grpcMessage string, respMeta map[string][]string)
+	once    sync.Once
+}
+
+func (b *observedGRPCBody) Read(p []byte) (int, error) {
+	return b.reader.Read(p)
+}
+
+func (b *observedGRPCBody) Close() error {
+	// Drain body so trailers are populated and capture.total is accurate.
+	io.Copy(io.Discard, b.reader)
+	err := b.closer.Close()
+	b.once.Do(func() {
+		grpcStatus := b.resp.Trailer.Get("Grpc-Status")
+		grpcMessage := b.resp.Trailer.Get("Grpc-Message")
+		if grpcStatus == "" {
+			// Some servers send trailers in headers when there's no body.
+			grpcStatus = b.resp.Header.Get("Grpc-Status")
+			grpcMessage = b.resp.Header.Get("Grpc-Message")
+		}
+		grpcStatus = grpcStatusName(grpcStatus)
+		respMeta := cloneHeaders(b.resp.Trailer)
+		b.emit(grpcStatus, grpcMessage, respMeta)
+	})
+	return err
+}
+
+// parseGRPCPath splits a gRPC path like "/pkg.Service/Method" into
+// service ("pkg.Service") and method ("Method").
+func parseGRPCPath(path string) (service, method string) {
+	// Path format: /package.Service/Method
+	path = strings.TrimPrefix(path, "/")
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[:i], path[i+1:]
+	}
+	return path, ""
+}
+
+// grpcStatusName converts a numeric gRPC status string (e.g. "0") to its
+// human-readable name (e.g. "OK") using the codes package.
+func grpcStatusName(s string) string {
+	n, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		return s
+	}
+	return codes.Code(n).String()
 }
 
 // cappedBuffer captures up to max bytes written to it, tracking total bytes

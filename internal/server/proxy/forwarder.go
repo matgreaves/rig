@@ -38,8 +38,10 @@ func (f *Forwarder) Runner() run.Runner {
 		switch f.Protocol {
 		case "http":
 			return f.runHTTP(ctx)
+		case "grpc":
+			return f.runGRPC(ctx)
 		default:
-			// TCP relay for tcp, grpc, and anything else.
+			// TCP relay for tcp and anything else.
 			return f.runTCP(ctx)
 		}
 	})

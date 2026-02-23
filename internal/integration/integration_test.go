@@ -19,6 +19,9 @@ import (
 	"github.com/matgreaves/rig/internal/server"
 	"github.com/matgreaves/rig/internal/server/service"
 	"github.com/matgreaves/rig/internal/testdata/services/echo"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 var sharedServerURL string
@@ -894,6 +897,76 @@ func TestObserveTCP(t *testing.T) {
 	}
 	if closed < 1 {
 		t.Errorf("connection.closed events (with bytes): got %d, want >= 1", closed)
+	}
+}
+
+// TestObserveGRPC verifies that gRPC proxy captures grpc.call.completed events
+// with correct service, method, and status fields.
+func TestObserveGRPC(t *testing.T) {
+	t.Parallel()
+	serverURL := sharedServerURL
+
+	env := rig.Up(t, rig.Services{
+		"temporal": rig.Temporal(),
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second), rig.WithObserve())
+
+	// Make a gRPC health check call through the proxy endpoint.
+	ep := env.Endpoint("temporal")
+	conn, err := grpc.NewClient(ep.Addr(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc dial: %v", err)
+	}
+	defer conn.Close()
+
+	client := healthpb.NewHealthClient(conn)
+	resp, err := client.Check(context.Background(), &healthpb.HealthCheckRequest{})
+	if err != nil {
+		t.Fatalf("grpc health check: %v", err)
+	}
+	t.Logf("health check response: %v", resp.Status)
+
+	// Give the proxy a moment to emit the event.
+	time.Sleep(200 * time.Millisecond)
+
+	// Fetch event log and verify grpc.call.completed events.
+	logResp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer logResp.Body.Close()
+
+	var events []struct {
+		Type     string `json:"type"`
+		GRPCCall *struct {
+			Source     string `json:"source"`
+			Target     string `json:"target"`
+			Service    string `json:"service"`
+			Method     string `json:"method"`
+			GRPCStatus string `json:"grpc_status"`
+		} `json:"grpc_call,omitempty"`
+	}
+	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	var found bool
+	for _, e := range events {
+		if e.Type != "grpc.call.completed" || e.GRPCCall == nil {
+			continue
+		}
+		g := e.GRPCCall
+		t.Logf("grpc event: source=%s target=%s service=%s method=%s status=%s",
+			g.Source, g.Target, g.Service, g.Method, g.GRPCStatus)
+		if g.Service == "grpc.health.v1.Health" && g.Method == "Check" {
+			found = true
+			if g.GRPCStatus != "OK" {
+				t.Errorf("grpc_status = %q, want OK", g.GRPCStatus)
+			}
+		}
+	}
+	if !found {
+		t.Error("no grpc.call.completed event found for grpc.health.v1.Health/Check")
 	}
 }
 

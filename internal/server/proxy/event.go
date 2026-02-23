@@ -6,6 +6,7 @@ type Event struct {
 	Type       string
 	Request    *RequestInfo
 	Connection *ConnectionInfo
+	GRPCCall   *GRPCCallInfo
 }
 
 // RequestInfo captures an observed HTTP request/response pair.
@@ -36,4 +37,20 @@ type ConnectionInfo struct {
 	BytesIn    int64
 	BytesOut   int64
 	DurationMs float64
+}
+
+// GRPCCallInfo captures an observed gRPC call.
+type GRPCCallInfo struct {
+	Source           string
+	Target           string
+	Ingress          string
+	Service          string              // "pkg.ServiceName"
+	Method           string              // "MethodName"
+	GRPCStatus       string              // "0" (OK), "5" (NOT_FOUND), etc.
+	GRPCMessage      string              // status message
+	LatencyMs        float64
+	RequestSize      int64
+	ResponseSize     int64
+	RequestMetadata  map[string][]string
+	ResponseMetadata map[string][]string
 }
