@@ -50,10 +50,11 @@ const (
 	EventHealthCheckFailed EventType = "health.check_failed"
 
 	// Traffic observation.
-	EventRequestCompleted  EventType = "request.completed"
-	EventConnectionOpened  EventType = "connection.opened"
-	EventConnectionClosed  EventType = "connection.closed"
-	EventProxyPublished    EventType = "proxy.published"
+	EventRequestCompleted   EventType = "request.completed"
+	EventConnectionOpened   EventType = "connection.opened"
+	EventConnectionClosed   EventType = "connection.closed"
+	EventProxyPublished     EventType = "proxy.published"
+	EventGRPCCallCompleted  EventType = "grpc.call.completed"
 )
 
 // LogEntry holds a line of service output.
@@ -121,6 +122,22 @@ type ConnectionInfo struct {
 	DurationMs float64 `json:"duration_ms"`
 }
 
+// GRPCCallInfo captures an observed gRPC call.
+type GRPCCallInfo struct {
+	Source           string              `json:"source"`
+	Target           string              `json:"target"`
+	Ingress          string              `json:"ingress"`
+	Service          string              `json:"service"`           // "pkg.ServiceName"
+	Method           string              `json:"method"`            // "MethodName"
+	GRPCStatus       string              `json:"grpc_status"`       // "0" (OK), "5" (NOT_FOUND), etc.
+	GRPCMessage      string              `json:"grpc_message"`      // status message
+	LatencyMs        float64             `json:"latency_ms"`
+	RequestSize      int64               `json:"request_size"`
+	ResponseSize     int64               `json:"response_size"`
+	RequestMetadata  map[string][]string `json:"request_metadata,omitempty"`
+	ResponseMetadata map[string][]string `json:"response_metadata,omitempty"`
+}
+
 // Event is a single entry in the event log.
 type Event struct {
 	Seq         uint64            `json:"seq"`
@@ -136,6 +153,7 @@ type Event struct {
 	Error       string            `json:"error,omitempty"`
 	Request     *RequestInfo      `json:"request,omitempty"`
 	Connection  *ConnectionInfo   `json:"connection,omitempty"`
+	GRPCCall    *GRPCCallInfo     `json:"grpc_call,omitempty"`
 	// Ingresses is populated on environment.up. It maps service name to a
 	// map of ingress name to endpoint, giving clients everything they need
 	// to connect to any service without a follow-up GET request.

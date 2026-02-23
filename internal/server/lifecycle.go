@@ -561,6 +561,22 @@ func proxyEmitter(sc *serviceContext) func(proxy.Event) {
 				DurationMs: pe.Connection.DurationMs,
 			}
 		}
+		if pe.GRPCCall != nil {
+			ev.GRPCCall = &GRPCCallInfo{
+				Source:           pe.GRPCCall.Source,
+				Target:           pe.GRPCCall.Target,
+				Ingress:          pe.GRPCCall.Ingress,
+				Service:          pe.GRPCCall.Service,
+				Method:           pe.GRPCCall.Method,
+				GRPCStatus:       pe.GRPCCall.GRPCStatus,
+				GRPCMessage:      pe.GRPCCall.GRPCMessage,
+				LatencyMs:        pe.GRPCCall.LatencyMs,
+				RequestSize:      pe.GRPCCall.RequestSize,
+				ResponseSize:     pe.GRPCCall.ResponseSize,
+				RequestMetadata:  pe.GRPCCall.RequestMetadata,
+				ResponseMetadata: pe.GRPCCall.ResponseMetadata,
+			}
+		}
 		sc.log.Publish(ev)
 	}
 }
