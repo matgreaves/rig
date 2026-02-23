@@ -736,8 +736,8 @@ func TestWrappedTB(t *testing.T) {
 	}
 }
 
-// TestObserve verifies that WithObserve() inserts transparent traffic proxies
-// and captures request events in the event log.
+// TestObserve verifies that observe mode (on by default) inserts transparent
+// traffic proxies and captures request events in the event log.
 func TestObserve(t *testing.T) {
 	t.Parallel()
 	serverURL := sharedServerURL
@@ -747,7 +747,7 @@ func TestObserve(t *testing.T) {
 	env := rig.Up(t, rig.Services{
 		"backend": rig.Func(echo.Run),
 		"api":     rig.Func(echo.Run).EgressAs("backend", "backend"),
-	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second), rig.WithObserve())
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
 	// Make requests through the external proxy (env.Endpoint returns proxy).
 	client := httpx.New(env.Endpoint("api"))
@@ -839,7 +839,7 @@ func TestObserveAttributes(t *testing.T) {
 
 	env := rig.Up(t, rig.Services{
 		"temporal": rig.Temporal(),
-	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second), rig.WithObserve())
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
 
 	ep := env.Endpoint("temporal")
 
@@ -871,7 +871,7 @@ func TestObserveTCP(t *testing.T) {
 	env := rig.Up(t, rig.Services{
 		"tcpecho": rig.Go(filepath.Join(root, "internal", "testdata", "services", "tcpecho")).
 			Ingress("default", rig.IngressTCP()),
-	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second), rig.WithObserve())
+	}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
 	// Connect through the proxy.
 	ep := env.Endpoint("tcpecho")
@@ -940,7 +940,7 @@ func TestObserveGRPC(t *testing.T) {
 
 	env := rig.Up(t, rig.Services{
 		"temporal": rig.Temporal(),
-	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second), rig.WithObserve())
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
 
 	// Make a gRPC health check call through the proxy endpoint.
 	ep := env.Endpoint("temporal")

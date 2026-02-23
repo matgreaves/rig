@@ -121,6 +121,7 @@ func defaultOptions() options {
 	return options{
 		serverURL:      os.Getenv("RIG_SERVER_ADDR"),
 		startupTimeout: 2 * time.Minute,
+		observe:        true,
 	}
 }
 
@@ -136,11 +137,12 @@ func WithTimeout(d time.Duration) Option {
 	return func(o *options) { o.startupTimeout = d }
 }
 
-// WithObserve enables transparent traffic proxying. When set, rig inserts
-// a proxy on every egress edge and every external connection, capturing
-// request/connection events in the event log.
-func WithObserve() Option {
-	return func(o *options) { o.observe = true }
+// WithoutObserve disables transparent traffic proxying. By default, rig
+// inserts a proxy on every egress edge and every external connection,
+// capturing request/connection events in the event log. Use this option
+// to disable that behavior.
+func WithoutObserve() Option {
+	return func(o *options) { o.observe = false }
 }
 
 // Up creates an environment, blocks until all services are ready, and
