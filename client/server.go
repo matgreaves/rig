@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// ensureServer finds or starts a rigd instance and returns its base URL
+// EnsureServer finds or starts a rigd instance and returns its base URL
 // (e.g. "http://127.0.0.1:12345"). rigDir overrides the default rig
 // directory (~/.rig) for addr/lock file discovery; pass "" for default.
-func ensureServer(rigDir string) (string, error) {
+func EnsureServer(rigDir string) (string, error) {
 	if rigDir == "" {
 		rigDir = defaultRigDir()
 	}
