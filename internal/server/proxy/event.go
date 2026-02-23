@@ -53,4 +53,11 @@ type GRPCCallInfo struct {
 	ResponseSize     int64
 	RequestMetadata  map[string][]string
 	ResponseMetadata map[string][]string
+
+	RequestBody           []byte
+	RequestBodyTruncated  bool
+	ResponseBody          []byte
+	ResponseBodyTruncated bool
+	RequestBodyDecoded    string // JSON from reflection, empty if unavailable
+	ResponseBodyDecoded   string
 }

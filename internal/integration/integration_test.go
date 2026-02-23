@@ -971,11 +971,17 @@ func TestObserveGRPC(t *testing.T) {
 	var events []struct {
 		Type     string `json:"type"`
 		GRPCCall *struct {
-			Source     string `json:"source"`
-			Target     string `json:"target"`
-			Service    string `json:"service"`
-			Method     string `json:"method"`
-			GRPCStatus string `json:"grpc_status"`
+			Source              string          `json:"source"`
+			Target              string          `json:"target"`
+			Service             string          `json:"service"`
+			Method              string          `json:"method"`
+			GRPCStatus          string          `json:"grpc_status"`
+			RequestBody         []byte          `json:"request_body,omitempty"`
+			RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
+			ResponseBody        []byte          `json:"response_body,omitempty"`
+			ResponseBodyTruncated bool          `json:"response_body_truncated,omitempty"`
+			RequestBodyDecoded  json.RawMessage `json:"request_body_decoded,omitempty"`
+			ResponseBodyDecoded json.RawMessage `json:"response_body_decoded,omitempty"`
 		} `json:"grpc_call,omitempty"`
 	}
 	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
@@ -988,12 +994,28 @@ func TestObserveGRPC(t *testing.T) {
 			continue
 		}
 		g := e.GRPCCall
-		t.Logf("grpc event: source=%s target=%s service=%s method=%s status=%s",
-			g.Source, g.Target, g.Service, g.Method, g.GRPCStatus)
+		t.Logf("grpc event: source=%s target=%s service=%s method=%s status=%s reqBody=%d respBody=%d reqDecoded=%s respDecoded=%s",
+			g.Source, g.Target, g.Service, g.Method, g.GRPCStatus,
+			len(g.RequestBody), len(g.ResponseBody),
+			string(g.RequestBodyDecoded), string(g.ResponseBodyDecoded))
 		if g.Service == "grpc.health.v1.Health" && g.Method == "Check" {
 			found = true
 			if g.GRPCStatus != "OK" {
 				t.Errorf("grpc_status = %q, want OK", g.GRPCStatus)
+			}
+			// Raw bodies should always be captured (gRPC frames).
+			if len(g.RequestBody) == 0 {
+				t.Error("request_body is empty, want captured gRPC frame")
+			}
+			if len(g.ResponseBody) == 0 {
+				t.Error("response_body is empty, want captured gRPC frame")
+			}
+			// Temporal dev server supports reflection, so the response
+			// (which has a non-empty status field) should be decoded.
+			// The request is an empty HealthCheckRequest, so its decoded
+			// body is legitimately empty (zero-byte protobuf payload).
+			if len(g.ResponseBodyDecoded) == 0 {
+				t.Error("response_body_decoded is empty, want decoded JSON (reflection supported)")
 			}
 		}
 	}

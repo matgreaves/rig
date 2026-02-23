@@ -19,6 +19,7 @@ type Forwarder struct {
 	Ingress    string        // target ingress name
 	Protocol   string        // from spec: "http", "tcp", etc.
 	Emit       func(Event)   // publish to event log
+	Decoder    *grpcDecoder  // set once before traffic flows; nil if reflection unavailable
 }
 
 // Endpoint returns the proxy endpoint that callers should connect to.
