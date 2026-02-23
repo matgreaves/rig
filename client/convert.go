@@ -46,6 +46,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return postgresToSpec(d, handlers)
 	case *CustomDef:
 		return customToSpec(d, handlers)
+	case *TemporalDef:
+		return temporalToSpec(d, handlers)
 	default:
 		return spec.Service{}, fmt.Errorf("unknown service type: %T", def)
 	}
@@ -282,4 +284,34 @@ func hookToSpec(h hook, handlers map[string]hookFunc) (*spec.HookSpec, error) {
 	default:
 		return nil, fmt.Errorf("unsupported hook type: %T", h)
 	}
+}
+
+func temporalToSpec(d *TemporalDef, handlers map[string]hookFunc) (spec.Service, error) {
+	var cfg json.RawMessage
+	if d.version != "" || d.namespace != "" {
+		cfgMap := make(map[string]string)
+		if d.version != "" {
+			cfgMap["version"] = d.version
+		}
+		if d.namespace != "" {
+			cfgMap["namespace"] = d.namespace
+		}
+		cfg, _ = json.Marshal(cfgMap)
+	}
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return spec.Service{}, err
+	}
+
+	return spec.Service{
+		Type:   "temporal",
+		Config: cfg,
+		Ingresses: map[string]spec.IngressSpec{
+			"default": {Protocol: spec.GRPC},
+			"ui":      {Protocol: spec.HTTP},
+		},
+		Egresses: egressesToSpec(d.egresses),
+		Hooks:    hooks,
+	}, nil
 }

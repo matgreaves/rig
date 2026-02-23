@@ -204,7 +204,7 @@ func TestForEndpoint_InfersFromProtocol(t *testing.T) {
 	}{
 		{spec.TCP, "*ready.TCP"},
 		{spec.HTTP, "*ready.HTTP"},
-		{spec.GRPC, "*ready.TCP"},
+		{spec.GRPC, "*ready.GRPC"},
 	}
 
 	for _, tt := range tests {
