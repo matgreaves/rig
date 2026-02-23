@@ -6,7 +6,7 @@ PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 # Kills any running rigd so stale processes don't serve old code.
 build:
 	cd internal && CGO_ENABLED=0 go build -trimpath -buildvcs=false -o ../bin/rigd ./cmd/rigd
-	@pkill -f rigd 2>/dev/null || true
+	@pkill -x rigd 2>/dev/null || true
 
 # Build rigd for all release platforms to ./bin/{os}-{arch}/rigd
 build-all:
