@@ -1,8 +1,10 @@
 .PHONY: build test clean clean-bin clean-logs clean-cache
 
 # Build rigd with reproducible flags to ./bin/
+# Kills any running rigd so stale processes don't serve old code.
 build:
 	cd internal && CGO_ENABLED=0 go build -trimpath -buildvcs=false -o ../bin/rigd ./cmd/rigd
+	@pkill -f rigd 2>/dev/null || true
 
 # Build rigd, then run tests with RIG_BINARY pointing at it
 test: build

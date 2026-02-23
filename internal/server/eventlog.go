@@ -74,10 +74,8 @@ type CallbackRequest struct {
 }
 
 // WiringContext provides resolved endpoint information to callbacks.
-// Contents vary by callback type:
-//   - prestart hook: Ingresses + Egresses + TempDir + EnvDir
-//   - init hook: Ingresses only + TempDir (no egresses)
-//   - custom type callbacks: type-specific
+// All hooks and start callbacks receive the full wiring: Ingresses,
+// Egresses, TempDir, and EnvDir.
 type WiringContext struct {
 	Ingresses  map[string]spec.Endpoint `json:"ingresses,omitempty"`
 	Egresses   map[string]spec.Endpoint `json:"egresses,omitempty"`
