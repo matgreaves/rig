@@ -493,6 +493,66 @@ func TestResolveDefaults_DoesNotResolveAmbiguousEgress(t *testing.T) {
 	}
 }
 
+func TestResolveDefaults_ResolvesDefaultIngressAmongMultiple(t *testing.T) {
+	// When a target has multiple ingresses but one is named "default",
+	// the egress should auto-resolve to "default".
+	env := spec.Environment{
+		Name: "test",
+		Services: map[string]spec.Service{
+			"temporal": {
+				Type: "temporal",
+				Ingresses: map[string]spec.IngressSpec{
+					"default": {Protocol: spec.GRPC},
+					"ui":      {Protocol: spec.HTTP},
+				},
+			},
+			"api": {
+				Type: "process",
+				Egresses: map[string]spec.EgressSpec{
+					"temporal": {Service: "temporal"}, // no ingress specified
+				},
+			},
+		},
+	}
+
+	server.ResolveDefaults(&env)
+
+	egress := env.Services["api"].Egresses["temporal"]
+	if egress.Ingress != "default" {
+		t.Errorf("expected egress ingress to resolve to 'default', got %q", egress.Ingress)
+	}
+}
+
+func TestValidateEnvironment_DefaultIngressFallbackValid(t *testing.T) {
+	// Egress to a service with multiple ingresses should pass validation
+	// when one is named "default".
+	env := spec.Environment{
+		Name: "test-env",
+		Services: map[string]spec.Service{
+			"temporal": {
+				Type: "temporal",
+				Ingresses: map[string]spec.IngressSpec{
+					"default": {Protocol: spec.GRPC},
+					"ui":      {Protocol: spec.HTTP},
+				},
+			},
+			"api": {
+				Type: "process",
+				Ingresses: map[string]spec.IngressSpec{
+					"default": {Protocol: spec.HTTP},
+				},
+				Egresses: map[string]spec.EgressSpec{
+					"temporal": {Service: "temporal"}, // no ingress — should resolve to "default"
+				},
+			},
+		},
+	}
+
+	if errs := server.ValidateEnvironment(&env); len(errs) > 0 {
+		t.Errorf("expected no errors, got: %v", errs)
+	}
+}
+
 func TestResolveDefaults_PreservesExplicitIngresses(t *testing.T) {
 	env := spec.Environment{
 		Name: "test",

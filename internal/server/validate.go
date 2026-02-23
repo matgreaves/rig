@@ -141,10 +141,10 @@ func validateService(name string, svc spec.Service, allServices map[string]spec.
 				))
 			}
 		} else {
-			// Single-ingress shorthand — target must have exactly one.
-			// ResolveDefaults would have resolved this if unambiguous,
-			// so if we're here with an empty Ingress, the target has multiple.
-			if len(target.Ingresses) != 1 {
+			// ResolveDefaults would have resolved this if the target had
+			// exactly one ingress or one named "default". If we're still
+			// here with an empty Ingress, it's genuinely ambiguous.
+			if len(target.Ingresses) > 1 {
 				available := ingressNames(target.Ingresses)
 				errs = append(errs, fmt.Sprintf(
 					"service %q, egress %q: target service %q has %d ingresses — specify which one (%s)",
@@ -160,7 +160,9 @@ func validateService(name string, svc spec.Service, allServices map[string]spec.
 // ResolveDefaults fills in default values on the environment spec.
 // Called automatically by ValidateEnvironment.
 func ResolveDefaults(env *spec.Environment) {
-	// Resolve single-ingress shorthand on egresses.
+	// Resolve egress ingress shorthand: if the egress doesn't specify
+	// which ingress to target, auto-resolve it. First try single-ingress
+	// shorthand (target has exactly one), then fall back to "default".
 	for name, svc := range env.Services {
 		for egressName, egress := range svc.Egresses {
 			if egress.Ingress == "" {
@@ -169,6 +171,9 @@ func ResolveDefaults(env *spec.Environment) {
 						for ingressName := range target.Ingresses {
 							egress.Ingress = ingressName
 						}
+						svc.Egresses[egressName] = egress
+					} else if _, hasDefault := target.Ingresses["default"]; hasDefault {
+						egress.Ingress = "default"
 						svc.Egresses[egressName] = egress
 					}
 				}

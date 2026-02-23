@@ -1,6 +1,12 @@
 package rig
 
-import "context"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
 
 // PostgresDef defines a service backed by the builtin Postgres type.
 // Rig manages the database name, user, and password — the API is minimal.
@@ -53,6 +59,46 @@ func (d *PostgresDef) EgressAs(name, service string, ingress ...string) *Postgre
 //	rig.Postgres().InitSQL("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL)")
 func (d *PostgresDef) InitSQL(statements ...string) *PostgresDef {
 	d.hooks.init = append(d.hooks.init, sqlHook{statements: statements})
+	return d
+}
+
+// InitSQLDir reads all .sql files from a directory, sorts them by filename,
+// and registers them as SQL init hooks. This is the directory-based equivalent
+// of InitSQL — use it with ordered migration files:
+//
+//	rig.Postgres().InitSQLDir("./migrations")
+//
+// The directory is resolved relative to the working directory at call time.
+// Panics if the directory cannot be read.
+func (d *PostgresDef) InitSQLDir(dir string) *PostgresDef {
+	if !filepath.IsAbs(dir) {
+		wd, err := os.Getwd()
+		if err != nil {
+			panic("rig: InitSQLDir: " + err.Error())
+		}
+		dir = filepath.Join(wd, dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		panic("rig: InitSQLDir: " + err.Error())
+	}
+	var stmts []string
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			panic("rig: InitSQLDir: " + err.Error())
+		}
+		stmts = append(stmts, string(data))
+	}
+	if len(stmts) > 0 {
+		d.hooks.init = append(d.hooks.init, sqlHook{statements: stmts})
+	}
 	return d
 }
 

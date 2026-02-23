@@ -12,7 +12,7 @@ import (
 
 // BenchmarkRequestThroughput measures HTTP request throughput through a
 // rig-managed echo service, comparing direct (observe=false) vs proxied
-// (observe=true) paths.
+// (observe=true, the default) paths.
 func BenchmarkRequestThroughput(b *testing.B) {
 	serverURL := sharedServerURL
 
@@ -27,8 +27,8 @@ func BenchmarkRequestThroughput(b *testing.B) {
 				rig.WithServer(serverURL),
 				rig.WithTimeout(60 * time.Second),
 			}
-			if observe {
-				opts = append(opts, rig.WithObserve())
+			if !observe {
+				opts = append(opts, rig.WithoutObserve())
 			}
 
 			env := rig.Up(b, rig.Services{

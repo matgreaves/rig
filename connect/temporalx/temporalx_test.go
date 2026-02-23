@@ -3,7 +3,6 @@ package temporalx_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	rig "github.com/matgreaves/rig/client"
 	"github.com/matgreaves/rig/connect"
@@ -60,7 +59,7 @@ func TestDial(t *testing.T) {
 
 	env := rig.Up(t, rig.Services{
 		"temporal": rig.Temporal(),
-	}, rig.WithTimeout(120*time.Second))
+	})
 
 	c, err := temporalx.Dial(env.Endpoint("temporal"))
 	if err != nil {

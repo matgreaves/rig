@@ -10,19 +10,23 @@ make test           # Build rigd, then run all tests with RIG_BINARY set
 make clean          # Remove build artifacts, logs, and cache
 ```
 
-`make test` builds `rigd` from `internal/cmd/rigd`, sets `RIG_BINARY`, then runs `go test ./...` in both the root module and `internal/`. Always use `make test` rather than bare `go test ./...`.
+`make test` builds `rigd` from `internal/cmd/rigd`, sets `RIG_BINARY`, then runs `go test ./...` in root, `internal/`, and `examples/`. Always use `make test` rather than bare `go test ./...`.
+
+If you need to run tests for a single module with `go test` directly (e.g. `cd examples && go test ./orderflow/ -run TestOrderFlow -v`), you **must** run `make build` first so the `rigd` binary is up-to-date, and set `RIG_BINARY=$(pwd)/bin/rigd`. Tests auto-start a `rigd` process that idles for 5 minutes — if you changed server code, kill any stale `rigd` processes (`pkill rigd`) before re-running tests so a fresh binary is used.
 
 ### Sub-modules
 
-The project has three Go modules:
+The project has five Go modules:
 
 | Module | Path | Purpose |
 |--------|------|---------|
 | `github.com/matgreaves/rig` | `go.mod` | Root module — zero external deps. Contains `client/`, `connect/`, `connect/httpx/` |
 | `github.com/matgreaves/rig/internal` | `internal/go.mod` | Server internals — heavy deps (Docker SDK, gRPC, etc). Contains `spec/`, `server/`, `cmd/rigd/`, `testdata/`, integration tests |
 | `github.com/matgreaves/rig/connect/temporalx` | `connect/temporalx/go.mod` | Temporal client helper — isolates Temporal SDK dependency |
+| `github.com/matgreaves/rig/connect/pgx` | `connect/pgx/go.mod` | Postgres client helper — isolates pgx/v5 dependency |
+| `github.com/matgreaves/rig/examples` | `examples/go.mod` | Example apps and integration tests |
 
-`connect/temporalx` integration test (`TestDial`) requires a `rigd` binary — either run `make build` first or set `RIG_BINARY`.
+Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples/`) require a `rigd` binary — either run `make build` first or set `RIG_BINARY`.
 
 ## Project structure
 
@@ -30,6 +34,8 @@ The project has three Go modules:
 - `connect/` — zero-dependency shared types (`Endpoint`, `Wiring`, `ParseWiring`)
 - `connect/httpx/` — HTTP client/server helpers built on rig endpoints
 - `connect/temporalx/` — Temporal client helper (sub-module)
+- `connect/pgx/` — Postgres client helper (sub-module)
+- `examples/orderflow/` — example order processing app (Postgres + Temporal + HTTP)
 - `internal/spec/` — shared spec types and validation
 - `internal/server/` — rigd server: orchestrator, lifecycle, health checks, artifact cache, proxy
 - `internal/cmd/rigd/` — rigd CLI entrypoint

@@ -105,7 +105,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		"mytemporal": rig.Temporal().Version("1.5.1").Namespace("test-ns"),
 		"mycustom":   rig.Custom("mytype", map[string]any{"key": "val"}).Args("-x"),
 		"myfunc":     rig.Func(func(ctx context.Context) error { return nil }),
-	}, rig.WithServer(ts.URL), rig.WithTimeout(5*time.Second), rig.WithObserve())
+	}, rig.WithServer(ts.URL), rig.WithTimeout(5*time.Second))
 
 	// --- Decode captured body with spec types ---
 
