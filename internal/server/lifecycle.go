@@ -308,7 +308,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 				return BuildServiceEnv(sc.name, ingresses, egresses, sc.tempDir, sc.envDir)
 			},
 			Callback: func(ctx context.Context, name, callbackType string) error {
-				return dispatchCallback(ctx, sc, name, callbackType, true)
+				return dispatchCallback(ctx, sc, name, callbackType)
 			},
 		})
 
@@ -437,14 +437,12 @@ func emitEvent(sc *serviceContext, eventType EventType) run.Runner {
 // dispatchCallback sends a callback request to the client SDK via the event
 // log and blocks until the response arrives. This is used both for hooks and
 // for client service type start callbacks.
-func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackType string, includeEgresses bool) error {
+func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackType string) error {
 	wiring := &WiringContext{
 		Ingresses: sc.ingresses,
+		Egresses:  sc.egresses,
 		TempDir:   sc.tempDir,
 		EnvDir:    sc.envDir,
-	}
-	if includeEgresses {
-		wiring.Egresses = sc.egresses
 	}
 
 	requestID := fmt.Sprintf("%s-%s-%s", sc.instanceID, sc.name, name)
@@ -480,19 +478,18 @@ func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackTyp
 // executeHook dispatches a hook to the appropriate executor.
 // client_func hooks are dispatched via callback events to the client SDK.
 // All other hook types are delegated to the service type's Initializer
-// and are only permitted during the init phase (includeEgresses=false).
-func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, includeEgresses bool) error {
+// and are only permitted during the init phase.
+func executeHook(ctx context.Context, sc *serviceContext, hook *spec.HookSpec, prestart bool) error {
 	if hook.Type == "client_func" {
 		if hook.ClientFunc == nil {
 			return fmt.Errorf("client_func hook missing client_func spec")
 		}
-		return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook", includeEgresses)
+		return dispatchCallback(ctx, sc, hook.ClientFunc.Name, "hook")
 	}
 
 	// Server-side hooks only run during init — the service must be running
-	// for the server to exec into it. Prestart hooks (includeEgresses=true)
-	// must be client_func.
-	if includeEgresses {
+	// for the server to exec into it. Prestart hooks must be client_func.
+	if prestart {
 		return fmt.Errorf("server-side hook type %q is not supported in prestart phase (only client_func hooks allowed)", hook.Type)
 	}
 
