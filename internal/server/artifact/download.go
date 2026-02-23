@@ -89,17 +89,29 @@ func (d Download) Resolve(ctx context.Context, outputDir string) (Output, error)
 			continue
 		}
 
-		f, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+		// Write to a temp file then rename to avoid "text file busy" errors
+		// when another process is exec'ing the same cached binary.
+		tmpFile, err := os.CreateTemp(outputDir, ".tmp-"+d.Binary+"-")
 		if err != nil {
-			return Output{}, fmt.Errorf("create binary: %w", err)
+			return Output{}, fmt.Errorf("create temp file: %w", err)
 		}
-		if _, err := io.Copy(f, tr); err != nil {
-			f.Close()
-			os.Remove(outputPath)
+		tmpPath := tmpFile.Name()
+		if _, err := io.Copy(tmpFile, tr); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
 			return Output{}, fmt.Errorf("extract binary: %w", err)
 		}
-		if err := f.Close(); err != nil {
+		if err := tmpFile.Close(); err != nil {
+			os.Remove(tmpPath)
 			return Output{}, fmt.Errorf("close binary: %w", err)
+		}
+		if err := os.Chmod(tmpPath, 0o755); err != nil {
+			os.Remove(tmpPath)
+			return Output{}, fmt.Errorf("chmod binary: %w", err)
+		}
+		if err := os.Rename(tmpPath, outputPath); err != nil {
+			os.Remove(tmpPath)
+			return Output{}, fmt.Errorf("rename binary: %w", err)
 		}
 
 		return Output{
