@@ -1,0 +1,59 @@
+name: Release rigd
+
+on:
+  push:
+    tags:
+      - "rigd/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: internal/go.mod
+
+      - name: Build all platforms
+        run: make build-all
+
+      - name: Package
+        run: |
+          for dir in bin/*/; do
+            platform=$(basename "$dir")
+            tar -czf "rigd-${platform}.tar.gz" -C "$dir" rigd
+          done
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --generate-notes \
+            rigd-*.tar.gz
+
+  bump-sdk:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#rigd/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Update client/version.go
+        run: |
+          sed -i 's/const RigdVersion = ".*"/const RigdVersion = "${{ steps.version.outputs.version }}"/' client/version.go
+
+      - name: Commit to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add client/version.go
+          git diff --cached --quiet && exit 0
+          git commit -m "Bump RigdVersion to ${{ steps.version.outputs.version }}"
+          git push origin HEAD:main

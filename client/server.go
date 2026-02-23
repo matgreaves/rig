@@ -18,12 +18,20 @@ func EnsureServer(rigDir string) (string, error) {
 		rigDir = defaultRigDir()
 	}
 
-	binPath, err := findBinary()
+	binPath, override, err := findBinary()
 	if err != nil {
 		return "", err
 	}
 
+	// When RIG_BINARY is set (override), use unversioned file names for
+	// backwards compatibility. Otherwise use per-version names so multiple
+	// SDK versions can coexist.
 	addrFile := filepath.Join(rigDir, "rigd.addr")
+	lockFile := filepath.Join(rigDir, "rigd.lock")
+	if !override {
+		addrFile = filepath.Join(rigDir, "rigd-v"+RigdVersion+".addr")
+		lockFile = filepath.Join(rigDir, "rigd-v"+RigdVersion+".lock")
+	}
 
 	// Fast path: existing instance.
 	if addr, err := os.ReadFile(addrFile); err == nil {
@@ -33,11 +41,10 @@ func EnsureServer(rigDir string) (string, error) {
 	}
 
 	// Acquire lock to prevent concurrent starts.
-	lockPath := filepath.Join(rigDir, "rigd.lock")
 	if err := os.MkdirAll(rigDir, 0o755); err != nil {
 		return "", fmt.Errorf("create rig dir: %w", err)
 	}
-	unlock, err := acquireLock(lockPath)
+	unlock, err := acquireLock(lockFile)
 	if err != nil {
 		return "", fmt.Errorf("acquire lock: %w", err)
 	}
@@ -50,8 +57,21 @@ func EnsureServer(rigDir string) (string, error) {
 		}
 	}
 
+	// If no binary found, download the version this SDK targets.
+	if binPath == "" {
+		binPath = filepath.Join(rigDir, "bin", "v"+RigdVersion, "rigd")
+		url := downloadURL(RigdVersion)
+		if err := downloadBinary(url, binPath); err != nil {
+			return "", fmt.Errorf("download rigd v%s: %w", RigdVersion, err)
+		}
+	}
+
 	// Start rigd as a detached subprocess.
-	cmd := exec.Command(binPath, "--idle", "5m", "--rig-dir", rigDir)
+	args := []string{"--idle", "5m", "--rig-dir", rigDir}
+	if !override {
+		args = append(args, "--addr-file", addrFile)
+	}
+	cmd := exec.Command(binPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	// Append stderr to a log file for debugging.
@@ -85,28 +105,40 @@ func EnsureServer(rigDir string) (string, error) {
 	return "", fmt.Errorf("rigd did not become healthy within %s (log: %s)", pollTimeout, logPath)
 }
 
-// findBinary locates the rigd binary. Checks in order:
-// 1. RIG_BINARY env var (explicit override for dev/CI)
-// 2. ~/.rig/bin/rigd (managed path — future: per-hash versioned)
-// 3. PATH lookup (last resort — risks version mismatch)
-func findBinary() (string, error) {
+// findBinary locates the rigd binary. Returns the path and whether this is an
+// explicit override (RIG_BINARY). When no binary is found, returns ("", false, nil)
+// so the caller can download one.
+//
+// Search order:
+//  1. RIG_BINARY env var (explicit override for dev/CI)
+//  2. ~/.rig/bin/v{RigdVersion}/rigd (versioned managed path)
+//  3. ~/.rig/bin/rigd (legacy unversioned)
+//  4. PATH lookup
+//  5. Not found — caller will download
+func findBinary() (path string, override bool, err error) {
 	if p := os.Getenv("RIG_BINARY"); p != "" {
 		if _, err := os.Stat(p); err == nil {
-			return p, nil
+			return p, true, nil
 		}
-		return "", fmt.Errorf("RIG_BINARY=%q: file not found", p)
+		return "", false, fmt.Errorf("RIG_BINARY=%q: file not found", p)
 	}
 	home, err := os.UserHomeDir()
 	if err == nil {
-		p := filepath.Join(home, ".rig", "bin", "rigd")
+		// Versioned path.
+		p := filepath.Join(home, ".rig", "bin", "v"+RigdVersion, "rigd")
 		if _, err := os.Stat(p); err == nil {
-			return p, nil
+			return p, false, nil
+		}
+		// Legacy unversioned path.
+		p = filepath.Join(home, ".rig", "bin", "rigd")
+		if _, err := os.Stat(p); err == nil {
+			return p, false, nil
 		}
 	}
 	if p, err := exec.LookPath("rigd"); err == nil {
-		return p, nil
+		return p, false, nil
 	}
-	return "", fmt.Errorf("rigd binary not found; install it, set RIG_BINARY, or set RIG_SERVER_ADDR")
+	return "", false, nil
 }
 
 // probeHealth sends GET /health to addr and returns true on 200.

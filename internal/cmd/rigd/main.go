@@ -20,6 +20,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:0", "listen address")
 	idle := flag.Duration("idle", 5*time.Minute, "idle shutdown timeout (0 to disable)")
 	rigDir := flag.String("rig-dir", "", "rig directory (default ~/.rig)")
+	addrFileFlag := flag.String("addr-file", "", "addr file path (default {rig-dir}/rigd.addr)")
 	flag.Parse()
 
 	if *rigDir == "" {
@@ -49,10 +50,19 @@ func main() {
 	}
 
 	// Write addr file atomically so clients never read a partial address.
-	addrFile := filepath.Join(*rigDir, "rigd.addr")
+	addrFile := *addrFileFlag
+	if addrFile == "" {
+		addrFile = filepath.Join(*rigDir, "rigd.addr")
+	}
 	if err := os.MkdirAll(*rigDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "rigd: mkdir %s: %v\n", *rigDir, err)
 		os.Exit(1)
+	}
+	if dir := filepath.Dir(addrFile); dir != *rigDir {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "rigd: mkdir %s: %v\n", dir, err)
+			os.Exit(1)
+		}
 	}
 	tmpFile := addrFile + ".tmp"
 	if err := os.WriteFile(tmpFile, []byte(ln.Addr().String()), 0o644); err != nil {
