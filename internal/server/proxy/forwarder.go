@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/matgreaves/rig/internal/spec"
 	"github.com/matgreaves/run"
@@ -20,6 +21,7 @@ type Forwarder struct {
 	Protocol   string        // from spec: "http", "tcp", etc.
 	Emit       func(Event)   // publish to event log
 	Decoder    *grpcDecoder  // set once before traffic flows; nil if reflection unavailable
+	Listener   net.Listener // pre-opened listener; avoids TOCTOU race when set
 }
 
 // Endpoint returns the proxy endpoint that callers should connect to.
@@ -49,6 +51,14 @@ func (f *Forwarder) Runner() run.Runner {
 			return f.runTCP(ctx)
 		}
 	})
+}
+
+// getListener returns the pre-opened listener if set, otherwise opens a new one.
+func (f *Forwarder) getListener() (net.Listener, error) {
+	if f.Listener != nil {
+		return f.Listener, nil
+	}
+	return net.Listen("tcp", f.listenAddr())
 }
 
 // targetAddr returns host:port of the real service.
