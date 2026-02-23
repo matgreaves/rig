@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/dockerutil"
 	"github.com/matgreaves/rig/internal/server/ready"
@@ -52,11 +53,11 @@ func (Postgres) Publish(_ context.Context, params PublishParams) (map[string]spe
 		if ep.Attributes == nil {
 			ep.Attributes = make(map[string]any)
 		}
-		ep.Attributes["PGHOST"] = ep.Host
-		ep.Attributes["PGPORT"] = strconv.Itoa(ep.Port)
-		ep.Attributes["PGDATABASE"] = params.ServiceName
-		ep.Attributes["PGUSER"] = postgresDefaultUser
-		ep.Attributes["PGPASSWORD"] = postgresDefaultPassword
+		connect.PGHost.Set(ep.Attributes, ep.Host)
+		connect.PGPort.Set(ep.Attributes, strconv.Itoa(ep.Port))
+		connect.PGDatabase.Set(ep.Attributes, params.ServiceName)
+		connect.PGUser.Set(ep.Attributes, postgresDefaultUser)
+		connect.PGPassword.Set(ep.Attributes, postgresDefaultPassword)
 		ep.AddressAttrs = map[string]spec.AddrAttr{
 			"PGHOST": spec.AttrHost,
 			"PGPORT": spec.AttrPort,
