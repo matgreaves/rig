@@ -39,9 +39,9 @@ func ForEndpoint(ep spec.Endpoint, readySpec *spec.ReadySpec) Checker {
 			path = readySpec.Path
 		}
 		return &HTTP{Path: path}
+	case "grpc":
+		return &GRPC{}
 	default:
-		// TCP dial works for plain TCP and gRPC alike.
-		// A proper gRPC health check can be added later without changing this interface.
 		return &TCP{}
 	}
 }

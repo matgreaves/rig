@@ -53,6 +53,7 @@ func startTestServer(t *testing.T) string {
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
 	reg.Register("postgres", service.Postgres{})
+	reg.Register("temporal", service.Temporal{})
 
 	rigDir := filepath.Join(moduleRoot(t), ".rig")
 	s := server.NewServer(
@@ -350,6 +351,41 @@ func TestUp(t *testing.T) {
 		}
 		if got := ep.Attr("PGPORT"); got == "" {
 			t.Error("PGPORT is empty")
+		}
+	})
+
+	t.Run("Temporal", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"temporal": rig.Temporal(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		// gRPC port reachable.
+		ep := env.Endpoint("temporal")
+		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		if err != nil {
+			t.Fatalf("temporal dial: %v", err)
+		}
+		conn.Close()
+
+		// Attributes.
+		if got := ep.Attr("TEMPORAL_ADDRESS"); got == "" {
+			t.Error("TEMPORAL_ADDRESS is empty")
+		}
+		if got := ep.Attr("TEMPORAL_NAMESPACE"); got != "default" {
+			t.Errorf("TEMPORAL_NAMESPACE = %q, want default", got)
+		}
+
+		// UI reachable.
+		uiEP := env.Endpoint("temporal", "ui")
+		resp, err := http.Get("http://" + uiEP.Addr())
+		if err != nil {
+			t.Fatalf("temporal UI request: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 500 {
+			t.Errorf("temporal UI status: %d, want < 500", resp.StatusCode)
 		}
 	})
 

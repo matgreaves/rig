@@ -32,6 +32,7 @@ func main() {
 	reg.Register("container", service.Container{})
 	reg.Register("client", service.Client{})
 	reg.Register("postgres", service.Postgres{})
+	reg.Register("temporal", service.Temporal{})
 
 	s := server.NewServer(
 		server.NewPortAllocator(),
