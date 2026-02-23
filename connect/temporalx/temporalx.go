@@ -18,12 +18,14 @@ import (
 
 // Addr extracts the TEMPORAL_ADDRESS attribute from the endpoint.
 func Addr(ep connect.Endpoint) string {
-	return ep.Attr("TEMPORAL_ADDRESS")
+	v, _ := connect.TemporalAddress.Get(ep)
+	return v
 }
 
 // Namespace extracts the TEMPORAL_NAMESPACE attribute from the endpoint.
 func Namespace(ep connect.Endpoint) string {
-	return ep.Attr("TEMPORAL_NAMESPACE")
+	v, _ := connect.TemporalNamespace.Get(ep)
+	return v
 }
 
 // Dial creates a Temporal client from a rig endpoint.

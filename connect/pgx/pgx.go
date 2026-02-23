@@ -14,7 +14,6 @@ package pgx
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // register "pgx" database/sql driver
@@ -24,12 +23,7 @@ import (
 // DSN builds a Postgres connection string from endpoint attributes.
 // Uses PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE with sslmode=disable.
 func DSN(ep connect.Endpoint) string {
-	host := ep.Attr("PGHOST")
-	port := ep.Attr("PGPORT")
-	user := ep.Attr("PGUSER")
-	pass := ep.Attr("PGPASSWORD")
-	db := ep.Attr("PGDATABASE")
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, pass, host, port, db)
+	return connect.PostgresDSN(ep)
 }
 
 // Connect returns a pgx connection pool from a rig Postgres endpoint.
