@@ -332,29 +332,30 @@ type ResolvedService struct {
 
 ## Port Allocation
 
-The server allocates **purely random ports** using the same approach as [`run/exp/ports`](https://github.com/matgreaves/run/tree/main/exp/ports) — bind to `:0`, let the OS assign a free port, then close the listener and return the port. This eliminates the need for configured port ranges and makes collisions between rigd instances, other services, and parallel CI jobs effectively impossible.
+Inspired by [`run/exp/ports`](https://github.com/matgreaves/run/tree/main/exp/ports), the port allocator uses a **prime-stepping strategy** to spread allocations across a fixed range `[8192, 32768)`. Each `PortAllocator` instance picks a random starting offset and a random prime step at construction time. Successive allocations advance through the range by the prime, guaranteeing maximum spread — every port in the range is visited before any is reused.
 
 **The spec never contains concrete ports.** All host-facing ports are allocated at instantiation time.
 
-- **Containers**: internal port is fixed (e.g., postgres listens on 5432 inside), host port is randomly allocated by rigd and mapped via Docker
-- **Processes**: port is randomly allocated by rigd and injected via env vars / template expansion
-- **Multiple instances**: each environment instance gets its own isolated port space — guaranteed by the OS
+- **Containers**: internal port is fixed (e.g., postgres listens on 5432 inside), host port is allocated by rigd and mapped via Docker
+- **Processes**: port is allocated by rigd and injected via env vars / template expansion
+- **Multiple instances**: each environment instance gets its own isolated port space
 
 ```go
 type PortAllocator struct {
-    mu        sync.Mutex
-    allocated map[int]string // port → environment instance ID (tracking only)
+    mu         sync.Mutex
+    allocated  map[int]string   // port → instance ID
+    byInstance map[string][]int // instance ID → ports
+    offset     uint64           // random starting point
+    step       uint64           // random prime
 }
 
-func (a *PortAllocator) Allocate(instanceID string, n int) ([]int, error)
+func (a *PortAllocator) Allocate(instanceID string, n int) ([]net.Listener, error)
 func (a *PortAllocator) Release(instanceID string)
 ```
 
-`Allocate` calls `net.Listen("tcp", ":0")` for each requested port, records the assigned port, closes the listener, and returns the ports. The in-process tracking map prevents the same rigd instance from handing out a port that's already in use by another active environment. The OS prevents collisions with everything else.
+`Allocate` returns **open `net.Listener`s** rather than raw port numbers. For each requested port, it steps through the range, skips already-allocated ports, and calls `net.Listen` on each candidate. The caller decides whether to keep the listener (proxy forwarders — zero TOCTOU window) or close it and use the port number (service ports handed to external processes).
 
-There is a small TOCTOU window between closing the listener and the service actually binding the port. In practice this is negligible — the port is used within milliseconds. If a service fails to bind, the error is clear and the environment fails fast.
-
-No port ranges, no configuration, no cross-process file locks for port coordination. The OS is the allocator.
+The random offset means two concurrent rigd processes start at different points in the range. The prime step means they diverge rapidly. And `net.Listen` is the ultimate arbiter — if two processes race for the same port, one wins and the other skips it.
 
 ---
 
@@ -1249,80 +1250,37 @@ rig/
 
 ## Build Plan
 
-### Phases 1–7 — COMPLETE
+### Phases 1–11 — COMPLETE
 
-Core architecture is built and tested:
+The engine is feature-complete. All phases through server auto-management are built, tested, and running in CI.
+
 - **Phase 1** — Spec types + validation (`spec/`, `server/validate.go`)
 - **Phase 2** — Core infrastructure (event log, ports, wiring)
 - **Phase 3** — Lifecycle orchestration + health checks (`server/lifecycle.go`, `server/ready/`)
 - **Phase 4** — HTTP API + SSE + end-to-end tests (`server/server.go`, `server/sse.go`)
 - **Phase 5** — Artifact system with caching and dedup (`server/artifact/`)
-- **Phase 6** — Go client SDK (`client/`) — note: `ensureServer` auto-management deferred to Phase 11
+- **Phase 6** — Go client SDK (`client/`) — `rig.Up`, builders, callbacks, `rig.Func()` client-side services
 - **Phase 7** — Docker container service type (`server/service/container.go`)
+- **Phase 8** — Builtin service types: Postgres (`server/service/postgres.go`), Temporal (`server/service/temporal.go`), Download artifact resolver (`server/artifact/download.go`)
+- **Phase 9** — Generic `exec` init hook on Container type — unlocks Kafka, LocalStack, Elasticsearch, RabbitMQ, etc. declaratively
+- **Phase 10** — Diagnostics: progress watchdog, `RIG_PRESERVE_ON_FAILURE`, timeout diagnostics with stuck-service identification
+- **Phase 11** — `rigd` binary auto-download, `ensureServer` in Go SDK, CI workflow gating releases on tests
 
-Also shipped: transparent HTTP/TCP proxy (`server/proxy/`), split event log optimization, benchmarks.
+Also shipped: transparent HTTP/TCP/gRPC proxy (`server/proxy/`), gRPC reflection-based payload decoding, split event log optimization, benchmarks, prime-stepping port allocator with TOCTOU-free proxy listeners.
 
-### Phase 8 — Builtin Service Types (Postgres complete, Temporal + Redis remaining)
+### Remaining — Redis Service Type
 
-**Done:**
-- `server/service/postgres.go` — container lifecycle, `pg_isready` health check, PG attribute publishing, SQL init hooks via `docker exec psql`
-- Client API: `rig.Postgres().InitSQL(...).InitHook(fn)`
+`server/service/redis.go` — Redis container. Publishes `REDIS_URL`. Straightforward container wrapper. Not blocking release.
 
-**Remaining:**
-- `server/service/temporal.go` — Temporal dev server. Requires the Download artifact resolver (binary, not container). Publishes `TEMPORAL_ADDRESS` and `TEMPORAL_NAMESPACE`. Custom ready check against gRPC health endpoint. Init hooks: `create-namespace`, `create-search-attributes`
-- `server/service/redis.go` — Redis container. Publishes `REDIS_URL`. Straightforward container wrapper
-- `server/artifact/download.go` — Download resolver. Fetch URL to local path, cached by URL + checksum. Needed by Temporal (and future binary-distributed services)
+### Next — v0.1 Release
 
-### Phase 9 — Generic `exec` Init Hook
+Cut the first tagged release. CI is gated, binary publishing works, auto-download works. Nothing is blocking this.
 
-Most cloud services in test environments are containers with a CLI for setup (create topic, create bucket, create queue). Rather than building a server-side type for each one, a generic `exec` hook lets users define init commands declaratively:
+### Next — Session Recording
 
-```json
-"hooks": {
-  "init": [{"type": "exec", "config": {"command": ["kafka-topics", "--create", "--topic", "orders"]}}]
-}
-```
+The event log is already a complete, ordered, timestamped record of everything that happened during an environment's lifetime. Recording is serialising it to JSONL on teardown. Replay and CI artifact integration follow naturally. See [VISION.md](./VISION.md) for the full design.
 
-This runs `docker exec` into the running container after it's healthy. The server already does this for Postgres's `psql` execution — this generalises it to any container service.
-
-**Why this matters:** unlocks Kafka, LocalStack, Elasticsearch, RabbitMQ, and any container-with-a-CLI from any SDK language, entirely declaratively. No client-side code, no callback round-trips. Reduces the pressure on both new builtin types and client-side custom types.
-
-**Implementation:**
-- Extract the `docker exec` logic from Postgres into a shared `execInContainer` helper
-- Add `exec` as a recognised hook type on the Container service type's `Initializer`
-- Postgres's SQL hook becomes a thin wrapper that builds the `psql` command and delegates to `execInContainer`
-
-### Phase 10 — Diagnostics & Debugging
-
-**Progress watchdog:** Track the last time any service changed lifecycle phase. If no progress for 30 seconds, log a diagnostic snapshot: which services are blocked, in which phase, what they're waiting on, and the current status of their dependencies. The watchdog does not abort — it only logs. The environment startup timeout remains the hard boundary.
-
-**`RIG_PRESERVE_ON_FAILURE`:** When a test fails, preserve temp directories, log files, and state instead of cleaning them up. The Go SDK checks `t.Failed()` in the cleanup function. Set `RIG_PRESERVE=true` to preserve on every run regardless of outcome.
-
-**Timeout diagnostics:** When any timeout fires, include which service is stuck, which lifecycle phase it's in, and what it's waiting on. Example: `"environment startup timeout (2m0s): service 'order-service' stuck in WAIT_FOR_EGRESSES — waiting on 'postgres' (status: starting)"`
-
-### Phase 11 — `rigd` Binary & Server Auto-Management
-
-**Why this is on the critical path:** The target use case is Java apps using Temporal, Postgres, and cloud services. Java tests need a Java SDK, which requires `rigd` as a standalone HTTP server. The in-process Go model works today but doesn't extend to other languages.
-
-**`cmd/rigd/main.go`:**
-- Starts the HTTP server on a random port
-- Writes listen address to `~/.rig/rigd-<hash>.addr`
-- Removes address file on shutdown
-- Idle timeout shuts down after no active environments for 5 minutes
-- Signal handling (SIGINT/SIGTERM) for graceful shutdown
-
-**`ensureServer` in Go SDK (`client/server.go`):**
-1. Check for running `rigd` via address file `~/.rig/rigd-<hash>.addr`
-2. If found, probe with HTTP health check to confirm liveness
-3. If not running, check `~/.rig/bin/<hash>/rigd` for cached binary
-4. If not cached, download the correct binary for the platform
-5. Acquire per-hash file lock (`~/.rig/rigd-<hash>.lock`) to prevent races
-6. Start `rigd` as a detached background process
-7. Release lock — other processes waiting on it find `rigd` running at step 1
-
-The SDK embeds a content hash of the compatible `rigd` version. Multiple engine versions coexist — each writes to its own address file. See the Versioning Model section above.
-
-### Phase 12 — Java SDK
+### Next — Java SDK
 
 Thin client: HTTP client + SSE stream reader + spec builder. No server, no orchestration, no port allocation.
 
@@ -1334,7 +1292,7 @@ Thin client: HTTP client + SSE stream reader + spec builder. No server, no orche
 
 The Java SDK should be a few hundred lines — the server does all the real work.
 
-### Phase 13 — Polish
+### Future — Polish
 
 - Godoc on all public API surfaces in `client/`
 - Example test files demonstrating common patterns (postgres + service, temporal workflow, multi-service graph)
@@ -1379,13 +1337,12 @@ The `Poller` and `pokeHTTP` pattern is exactly what our `server/ready/http.go` s
 
 We should generalise this pattern into a `poll` function that our TCP, HTTP, and gRPC ready checkers all use, keeping the exponential backoff logic in one place.
 
-### `exp/ports` — Random Port Allocation
+### `exp/ports` — Prime-Stepping Port Allocation
 
-Our `server/ports.go` uses the same approach as `exp/ports` — bind to `:0`, let the OS assign a free port, close the listener, return the port. This is the entire port allocation strategy. No configured ranges, no cross-process file locks, no coordination protocol. The OS is the allocator.
-
-On top of this, rigd adds lightweight in-process tracking:
-- Map of allocated port → environment instance ID (prevents the same rigd from handing out a port it already assigned to an active environment)
-- Release on environment teardown (removes ports from the tracking map)
+Our `server/ports.go` adapts the prime-stepping idea from `exp/ports` — advance through a port range by a random prime for maximum spread. On top of this, rigd:
+- Returns open `net.Listener`s (not raw port numbers) so proxy forwarders have zero TOCTOU window
+- Tracks allocated port → environment instance ID to prevent intra-process collisions
+- Releases tracking on environment teardown
 
 ### `onexit` — Robust Cleanup on Abrupt Exit
 

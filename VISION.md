@@ -1,6 +1,6 @@
 # rig — Future Vision: Unified Test Observability
 
-> This document captures the long-term vision for rig beyond v1. None of this is required for the initial implementation — it's recorded here so that v1 architectural decisions don't accidentally close doors. The v1 architecture (event log, SSE streaming, explicit egress wiring) is the right foundation for everything described here.
+> This document captures the long-term vision for rig. The transparent proxy layer is now implemented — everything from "Transparent Proxy Layer" through "Opting In" below describes shipped functionality. The dashboard, session recording, and chaos injection sections remain future work that builds on the proxy and event log foundations already in place.
 
 ## The Insight
 
@@ -14,9 +14,9 @@ Docker Compose can't do this because services find each other by DNS name. Kuber
 
 ---
 
-## Transparent Proxy Layer
+## Transparent Proxy Layer — SHIPPED
 
-For each egress→ingress edge where rig knows the protocol, it can insert a reverse proxy:
+For each egress→ingress edge where rig knows the protocol, it inserts a reverse proxy:
 
 ```
 Without proxy:
@@ -28,9 +28,9 @@ With proxy:
 
 The only thing that changes is the address in the wiring. The service's code is identical.
 
-### Protocol-Aware Proxying
+### Protocol-Aware Proxying — SHIPPED
 
-Each ingress already declares its protocol in the spec. rig knows how to proxy each type:
+Each ingress declares its protocol in the spec. rig proxies each type:
 
 | Protocol | Proxy | Captures |
 |----------|-------|----------|
@@ -38,9 +38,9 @@ Each ingress already declares its protocol in the spec. rig knows how to proxy e
 | gRPC | HTTP/2 reverse proxy | Service/method, metadata, status code, latency. Decode payloads if reflection available |
 | TCP | Raw byte-level relay | Connection open/close, bytes transferred, timing. Cannot decode payloads |
 
-### Request/Response Events
+### Request/Response Events — SHIPPED
 
-Each proxied request becomes an event on the existing event bus:
+Each proxied request becomes an event on the event bus:
 
 ```go
 const (
@@ -66,23 +66,13 @@ type RequestInfo struct {
 
 These events flow through the same event log, the same SSE stream, and the same session recordings as every other event. No new infrastructure.
 
-### Opting In
+### On by Default — SHIPPED
 
-Proxy insertion should be opt-in per environment or per egress edge. Proxying adds ~1ms of latency per request, which is negligible for most testing but could affect latency-sensitive benchmarks.
-
-```json
-{
-  "name": "order-workflow",
-  "observe": true,
-  "services": { ... }
-}
-```
-
-Or per-edge: `"egresses": {"database": {"service": "postgres", "observe": true}}`
+Proxy insertion is **on by default** — every environment gets full traffic observability with zero configuration. Proxying adds ~1ms of latency per request, which is negligible for most testing but could affect latency-sensitive benchmarks. Disable with `WithoutObserve()` in the Go SDK or `"observe": false` in the spec.
 
 ---
 
-## Live Dashboard
+## Live Dashboard — FUTURE
 
 ### CLI Dashboard (TUI)
 
@@ -130,7 +120,7 @@ A browser-based dashboard served by rigd itself. Same data, richer rendering:
 
 ---
 
-## Session Recording & Replay
+## Session Recording & Replay — NEXT
 
 ### Recording
 
@@ -195,7 +185,7 @@ Each `rig.Up()` call produces its own environment with its own event stream and 
 
 ---
 
-## Chaos & Fault Injection (Speculative)
+## Chaos & Fault Injection — FUTURE
 
 Because the proxy sits between every service, it can do more than observe:
 
@@ -261,14 +251,14 @@ The reason no existing tool provides this for local development is that no other
 
 ---
 
-## Architectural Prerequisites from v1
+## Architectural Foundations — SHIPPED
 
-Everything in this document builds on v1 decisions that are already made:
+Everything in this document builds on foundations that are built and working:
 
-1. **Event log as single source of truth** — coordination, observability, and future replay all read from the same log
-2. **SSE streaming to clients** — the dashboard, the SDK, and replay all consume the same event stream
-3. **Explicit egress wiring** — proxy insertion is just a wiring change, no new mechanism needed
-4. **Protocol declarations on ingresses** — the proxy knows how to handle each edge
-5. **Session-scoped event streams** — parallel tests produce isolated recordings
+1. **Event log as single source of truth** — coordination, observability, and proxy traffic all flow through the same log
+2. **SSE streaming to clients** — the SDK consumes lifecycle events, callback requests, and proxy traffic on a single stream
+3. **Explicit egress wiring** — proxy insertion is a wiring change, not a new mechanism. Implemented in `server/lifecycle.go`
+4. **Protocol declarations on ingresses** — the proxy dispatches to HTTP, TCP, or gRPC handlers based on protocol. Implemented in `server/proxy/`
+5. **Session-scoped event streams** — parallel tests produce isolated recordings with no interleaving
 
-No v1 code needs to change to support this vision. The extension points are: new event types (request.*), a proxy step in the wiring phase, and consumers (TUI, web UI, replay tool) that read the event stream.
+The remaining vision items (dashboard, recording, replay, chaos) are consumers of the event stream and proxy infrastructure that already exist. No engine changes are needed.
