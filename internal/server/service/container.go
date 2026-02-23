@@ -325,6 +325,9 @@ func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string
 			ep.Port = is.ContainerPort
 		}
 
+		// Rewrite declared address-derived attrs first, then fall back
+		// to convention-based adjustAttrs for user-specified attributes.
+		ep.Attributes = spec.RewriteAddressAttrs(ep, ep.Host, ep.Port)
 		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, origPort, strconv.Itoa(ep.Port))
 		adjusted[name] = ep
 	}
@@ -339,6 +342,9 @@ func adjustEgressEndpoints(egresses map[string]spec.Endpoint, hostIP string) map
 	for name, ep := range egresses {
 		origHost := ep.Host
 		ep.Host = strings.ReplaceAll(ep.Host, "127.0.0.1", hostIP)
+		// Rewrite declared address-derived attrs first, then fall back
+		// to convention-based adjustAttrs for user-specified attributes.
+		ep.Attributes = spec.RewriteAddressAttrs(ep, ep.Host, ep.Port)
 		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, "", "")
 		adjusted[name] = ep
 	}

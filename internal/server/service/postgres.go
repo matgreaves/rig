@@ -57,6 +57,10 @@ func (Postgres) Publish(_ context.Context, params PublishParams) (map[string]spe
 		ep.Attributes["PGDATABASE"] = params.ServiceName
 		ep.Attributes["PGUSER"] = postgresDefaultUser
 		ep.Attributes["PGPASSWORD"] = postgresDefaultPassword
+		ep.AddressAttrs = map[string]spec.AddrAttr{
+			"PGHOST": spec.AttrHost,
+			"PGPORT": spec.AttrPort,
+		}
 		endpoints[name] = ep
 	}
 	return endpoints, nil
