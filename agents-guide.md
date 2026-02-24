@@ -120,6 +120,32 @@ rig.Up(t, services,
 )
 ```
 
+## Debugging test failures
+
+When a rig test fails, the log path is printed: `rig: event log: .rig/logs/<env>.jsonl`. Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`, then inspect the JSONL:
+
+```bash
+# See all HTTP/gRPC/TCP traffic as a table
+rig traffic .rig/logs/TestOrderFlow.jsonl
+
+# Expand a specific request — headers, bodies, latency
+rig traffic .rig/logs/TestOrderFlow.jsonl --detail 3
+
+# Filter to a specific edge or slow requests
+rig traffic .rig/logs/TestOrderFlow.jsonl --edge "order→postgres"
+rig traffic .rig/logs/TestOrderFlow.jsonl --slow 100ms
+rig traffic .rig/logs/TestOrderFlow.jsonl --status 5xx
+
+# View interleaved service logs with inline test assertions
+rig logs .rig/logs/TestOrderFlow.jsonl
+
+# Filter logs to one service or search for a pattern
+rig logs .rig/logs/TestOrderFlow.jsonl --service order
+rig logs .rig/logs/TestOrderFlow.jsonl --grep "connection refused"
+```
+
+Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red `✗` markers with file:line info, interleaved with the service output that was happening at the time.
+
 ## Build & test (for rig contributors)
 
 ```bash

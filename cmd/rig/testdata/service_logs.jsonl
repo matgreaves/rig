@@ -1,0 +1,13 @@
+{"seq":1,"type":"environment.up","environment":"TestApp","timestamp":"2026-02-23T10:00:00Z"}
+{"seq":2,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stdout","data":"starting order service on :8080"},"timestamp":"2026-02-23T10:00:00.412Z"}
+{"seq":3,"type":"service.log","environment":"TestApp","service":"postgres","log":{"stream":"stdout","data":"ready to accept connections on port 5432"},"timestamp":"2026-02-23T10:00:00.415Z"}
+{"seq":4,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stdout","data":"connected to postgres"},"timestamp":"2026-02-23T10:00:00.500Z"}
+{"seq":5,"type":"service.log","environment":"TestApp","service":"temporal","log":{"stream":"stdout","data":"temporal server started"},"timestamp":"2026-02-23T10:00:00.510Z"}
+{"seq":6,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stdout","data":"processing order abc123"},"timestamp":"2026-02-23T10:00:00.891Z"}
+{"seq":7,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stderr","data":"failed to connect to temporal: connection refused"},"timestamp":"2026-02-23T10:00:01.102Z"}
+{"seq":8,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stdout","data":"retrying temporal connection"},"timestamp":"2026-02-23T10:00:01.200Z"}
+{"seq":9,"type":"service.log","environment":"TestApp","service":"order","log":{"stream":"stdout","data":"order abc123 completed successfully"},"timestamp":"2026-02-23T10:00:01.500Z"}
+{"seq":10,"type":"test.note","environment":"TestApp","error":"order_test.go:42: expected status \"complete\", got \"pending\"","timestamp":"2026-02-23T10:00:01.800Z"}
+{"seq":11,"type":"service.log","environment":"TestApp","service":"postgres","log":{"stream":"stderr","data":"checkpoint complete: wrote 42 buffers"},"timestamp":"2026-02-23T10:00:02.000Z"}
+{"seq":12,"type":"test.note","environment":"TestApp","error":"order_test.go:51: order abc123 should have been fulfilled","timestamp":"2026-02-23T10:00:02.050Z"}
+{"seq":13,"type":"request.completed","environment":"TestApp","request":{"source":"order","target":"postgres","ingress":"default","method":"GET","path":"/health","status_code":200,"latency_ms":0.5,"request_size":0,"response_size":2},"timestamp":"2026-02-23T10:00:02.100Z"}
