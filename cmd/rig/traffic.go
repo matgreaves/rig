@@ -159,6 +159,13 @@ func runTraffic(args []string) error {
 		filter.protocol = "tcp"
 	}
 
+	// Resolve glob pattern if the argument isn't a direct file path.
+	resolved, err := resolveLogFile(filename)
+	if err != nil {
+		return err
+	}
+	filename = resolved
+
 	f, err := os.Open(filename)
 	if err != nil {
 		return err

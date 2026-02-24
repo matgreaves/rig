@@ -122,29 +122,51 @@ rig.Up(t, services,
 
 ## Debugging test failures
 
-When a rig test fails, the log path is printed: `rig: event log: .rig/logs/<env>.jsonl`. Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`, then inspect the JSONL:
+Each test that calls `rig.Up` produces a `.jsonl` log in `{RIG_DIR}/logs/`. Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`.
+
+**Find logs by test name** — don't use full paths. Tests run in parallel so "most recent" is meaningless; use the test name:
 
 ```bash
-# See all HTTP/gRPC/TCP traffic as a table
-rig traffic .rig/logs/TestOrderFlow.jsonl
+# List all recent logs, or just failures
+rig ls
+rig ls --failed
 
-# Expand a specific request — headers, bodies, latency
-rig traffic .rig/logs/TestOrderFlow.jsonl --detail 3
-
-# Filter to a specific edge or slow requests
-rig traffic .rig/logs/TestOrderFlow.jsonl --edge "order→postgres"
-rig traffic .rig/logs/TestOrderFlow.jsonl --slow 100ms
-rig traffic .rig/logs/TestOrderFlow.jsonl --status 5xx
-
-# View interleaved service logs with inline test assertions
-rig logs .rig/logs/TestOrderFlow.jsonl
-
-# Filter logs to one service or search for a pattern
-rig logs .rig/logs/TestOrderFlow.jsonl --service order
-rig logs .rig/logs/TestOrderFlow.jsonl --grep "connection refused"
+# Inspect a specific test — fuzzy name matching, no path needed
+rig traffic OrderFlow
+rig logs OrderFlow
 ```
 
-Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red `✗` markers with file:line info, interleaved with the service output that was happening at the time.
+**Compose for scripting** — `rig ls -q` outputs file paths (one per line) for piping:
+
+```bash
+# Most recent failure
+rig traffic $(rig ls --failed -q -n1)
+
+# All failures
+rig ls --failed -q | xargs -I{} rig traffic {}
+
+# Most recent OrderFlow failure
+rig logs $(rig ls --failed -q -n1 Order)
+```
+
+**Traffic inspection**:
+
+```bash
+rig traffic OrderFlow --detail 3            # expand request #3 — headers, bodies
+rig traffic OrderFlow --edge "order→db"     # filter by service edge
+rig traffic OrderFlow --slow 100ms          # only slow requests
+rig traffic OrderFlow --status 5xx          # only server errors
+```
+
+**Service logs**:
+
+```bash
+rig logs OrderFlow                          # interleaved logs from all services
+rig logs OrderFlow --service api            # filter to one service
+rig logs OrderFlow --grep "connection refused"
+```
+
+Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red markers with file:line info, interleaved with the service output that was happening at the time.
 
 ## Build & test (for rig contributors)
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -238,7 +239,7 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 		funcCancel()
 		preserve := os.Getenv("RIG_PRESERVE") == "true" ||
 			(t.Failed() && os.Getenv("RIG_PRESERVE_ON_FAILURE") == "true")
-		logFile := destroyEnvironment(o.serverURL, envID, preserve)
+		result := destroyEnvironment(o.serverURL, envID, preserve, t.Failed())
 		if t.Failed() && envDir != "" {
 			if preserve {
 				t.Logf("rig: environment dir (preserved): %s", envDir)
@@ -247,8 +248,20 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 				t.Logf("rig: to preserve on failure, set RIG_PRESERVE_ON_FAILURE=true")
 			}
 		}
-		if logFile != "" {
-			t.Logf("rig: event log: %s", logFile)
+		if result.LogFile != "" {
+			t.Logf("rig: event log: %s", result.LogFile)
+		}
+		if result.LogFilePretty != "" {
+			t.Logf("rig: timeline:  %s", result.LogFilePretty)
+		}
+		if result.LogFile != "" {
+			name := strings.TrimSuffix(filepath.Base(result.LogFile), ".jsonl")
+			var prefix string
+			if dir := os.Getenv("RIG_DIR"); dir != "" {
+				prefix = "RIG_DIR=" + dir + " "
+			}
+			t.Logf("rig: %srig traffic %s", prefix, name)
+			t.Logf("rig: %srig logs    %s", prefix, name)
 		}
 	})
 
@@ -274,27 +287,40 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 	return resolved, nil
 }
 
+// destroyResult holds the paths returned by the server after teardown.
+type destroyResult struct {
+	LogFile       string // structured JSONL event log
+	LogFilePretty string // human-readable timeline summary
+}
+
 // destroyEnvironment sends DELETE /environments/{id}?log=true. Blocks until
 // teardown completes. The server writes the event log to disk and returns the
-// path. Errors are swallowed — cleanup must not abort other tests.
-func destroyEnvironment(serverURL, envID string, preserve bool) string {
+// paths. Errors are swallowed — cleanup must not abort other tests.
+func destroyEnvironment(serverURL, envID string, preserve bool, failed bool) destroyResult {
 	url := fmt.Sprintf("%s/environments/%s?log=true", serverURL, envID)
 	if preserve {
 		url += "&preserve=true"
 	}
+	if failed {
+		url += "&reason=test_failed"
+	}
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
-		return ""
+		return destroyResult{}
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ""
+		return destroyResult{}
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		LogFile string `json:"log_file"`
+		LogFile       string `json:"log_file"`
+		LogFilePretty string `json:"log_file_pretty"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return result.LogFile
+	return destroyResult{
+		LogFile:       result.LogFile,
+		LogFilePretty: result.LogFilePretty,
+	}
 }

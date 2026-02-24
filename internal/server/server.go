@@ -38,7 +38,8 @@ type envInstance struct {
 	spec     *spec.Environment
 	log      *EventLog
 	envDir   string
-	preserve *bool // shared with Orchestrator; set to true to skip cleanup
+	preserve *bool  // shared with Orchestrator; set to true to skip cleanup
+	reason   string // client-signalled teardown reason (e.g. "test_failed")
 
 	cancel context.CancelFunc
 	done   <-chan error // receives runner's terminal error (buffered 1)
@@ -347,6 +348,11 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Record client-signalled reason (e.g. "test_failed") for outcome derivation.
+	if reason := r.URL.Query().Get("reason"); reason != "" {
+		inst.reason = reason
+	}
+
 	inst.cancel()
 	<-inst.done
 
@@ -359,8 +365,9 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		"env_dir": inst.envDir,
 	}
 	if r.URL.Query().Get("log") == "true" {
-		if path, err := s.writeEventLog(inst); err == nil {
-			result["log_file"] = path
+		if jsonlPath, logPath, err := s.writeEventLog(inst); err == nil {
+			result["log_file"] = jsonlPath
+			result["log_file_pretty"] = logPath
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -585,41 +592,110 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, inst.log.Events())
 }
 
+// logHeader is the synthetic first line of a JSONL event log. It contains
+// everything rig ls needs to display a summary without reading further.
+type logHeader struct {
+	Type        string   `json:"type"`
+	Environment string   `json:"environment"`
+	Outcome     string   `json:"outcome,omitempty"`
+	Services    []string `json:"services,omitempty"`
+	DurationMs  float64  `json:"duration_ms"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
+// deriveOutcome computes the test outcome from the client reason and event log.
+//  1. Events contain environment.failing → "crashed" (most specific — a service died)
+//  2. Client signalled "test_failed" → "failed" (test assertions outside env.T)
+//  3. Events contain test.note → "failed" (test assertions via env.T)
+//  4. Otherwise → "passed"
+func deriveOutcome(reason string, events []Event) string {
+	for _, e := range events {
+		if e.Type == EventEnvironmentFailing {
+			return "crashed"
+		}
+	}
+	if reason == "test_failed" {
+		return "failed"
+	}
+	for _, e := range events {
+		if e.Type == EventTestNote {
+			return "failed"
+		}
+	}
+	return "passed"
+}
+
 // logMaxAge is how long event log files are kept before pruning.
 const logMaxAge = 72 * time.Hour
 
 // writeEventLog writes both a structured JSONL event log and a human-readable
 // timeline summary to {rigDir}/logs/. The JSONL file (one event per line) is
 // the source of truth for tooling; the .log file is a convenience rendering
-// for quick scanning. Returns the JSONL file path on success.
-func (s *Server) writeEventLog(inst *envInstance) (string, error) {
+// for quick scanning. Returns both file paths on success.
+func (s *Server) writeEventLog(inst *envInstance) (jsonlFile, logFile string, err error) {
 	logDir := filepath.Join(s.rigDir, "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	pruneOldLogs(logDir, logMaxAge)
 
 	events := inst.log.Events()
 	if len(events) == 0 {
-		return "", fmt.Errorf("no events")
+		return "", "", fmt.Errorf("no events")
 	}
 
 	safe := strings.NewReplacer("/", "_", "\\", "_", " ", "_").Replace(inst.spec.Name)
 	base := filepath.Join(logDir, safe+"-"+inst.id)
 
+	// Derive outcome from events + client reason.
+	outcome := deriveOutcome(inst.reason, events)
+
+	// Collect service names from lifecycle events.
+	serviceSet := map[string]struct{}{}
+	for _, e := range events {
+		if e.Service != "" {
+			serviceSet[e.Service] = struct{}{}
+		}
+	}
+	serviceNames := make([]string, 0, len(serviceSet))
+	for name := range serviceSet {
+		serviceNames = append(serviceNames, name)
+	}
+	sort.Strings(serviceNames)
+
+	// Compute duration from first to last event.
+	var durationMs float64
+	if len(events) > 1 {
+		durationMs = float64(events[len(events)-1].Timestamp.Sub(events[0].Timestamp).Milliseconds())
+	}
+
 	// Write structured JSONL — one event per line for streaming parsers.
+	// The first line is a synthetic log.header for fast scanning by rig ls.
 	jsonlPath := base + ".jsonl"
 	var jb strings.Builder
 	enc := json.NewEncoder(&jb)
 	enc.SetEscapeHTML(false)
+
+	header := logHeader{
+		Type:        "log.header",
+		Environment: inst.spec.Name,
+		Outcome:     outcome,
+		Services:    serviceNames,
+		DurationMs:  durationMs,
+		Timestamp:   time.Now(),
+	}
+	if err := enc.Encode(header); err != nil {
+		return "", "", err
+	}
+
 	for _, e := range events {
 		if err := enc.Encode(e); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if err := os.WriteFile(jsonlPath, []byte(jb.String()), 0o644); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Collect the last few log lines per service so we can include them
@@ -664,7 +740,9 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 	// Write human-readable timeline summary alongside.
 	var b strings.Builder
 	start := events[0].Timestamp
-	fmt.Fprintf(&b, "rig: event timeline for environment %s:", inst.id)
+	durSec := durationMs / 1000.0
+	fmt.Fprintf(&b, "rig: %s  %s  %.2fs  [%s]",
+		inst.spec.Name, strings.ToUpper(outcome), durSec, strings.Join(serviceNames, ", "))
 	for _, e := range events {
 		// Skip noisy per-line events — the timeline is a structural overview.
 		// Health check probes and service log lines are in the JSONL for detail.
@@ -779,11 +857,11 @@ func (s *Server) writeEventLog(inst *envInstance) (string, error) {
 		}
 	}
 
-	// Write human-readable timeline — this is what we surface to users.
+	// Write human-readable timeline alongside the JSONL.
 	logPath := base + ".log"
 	os.WriteFile(logPath, []byte(b.String()+"\n"), 0o644)
 
-	return logPath, nil
+	return jsonlPath, logPath, nil
 }
 
 // pruneOldLogs removes .jsonl and .log files older than maxAge from dir.

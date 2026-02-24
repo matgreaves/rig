@@ -1,0 +1,3 @@
+{"type":"log.header","environment":"TestOrderFlow","outcome":"failed","services":["db","temporal","api"],"duration_ms":3312,"timestamp":"2026-02-24T20:32:01Z"}
+{"seq":1,"type":"service.starting","environment":"TestOrderFlow","service":"db","timestamp":"2026-02-24T20:31:58Z"}
+{"seq":2,"type":"test.note","environment":"TestOrderFlow","error":"expected 200, got 500","timestamp":"2026-02-24T20:32:01Z"}
