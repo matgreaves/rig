@@ -52,6 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Parse version from tag
         id: version
@@ -68,4 +70,4 @@ jobs:
           git add client/version.go
           git diff --cached --quiet && exit 0
           git commit -m "Bump RigdVersion to ${{ steps.version.outputs.version }}"
-          git push origin HEAD:main
+          git push origin main
