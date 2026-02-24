@@ -46,6 +46,8 @@ func (f *Forwarder) Runner() run.Runner {
 			return f.runHTTP(ctx)
 		case "grpc":
 			return f.runGRPC(ctx)
+		case "kafka":
+			return f.runKafka(ctx)
 		default:
 			// TCP relay for tcp and anything else.
 			return f.runTCP(ctx)

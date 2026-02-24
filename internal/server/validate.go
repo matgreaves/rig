@@ -79,7 +79,7 @@ func validateService(name string, svc spec.Service, allServices map[string]spec.
 
 		if !ingress.Protocol.Valid() {
 			errs = append(errs, fmt.Sprintf(
-				"service %q, ingress %q: invalid protocol %q (must be one of: tcp, http, grpc)",
+				"service %q, ingress %q: invalid protocol %q (must be one of: tcp, http, grpc, kafka)",
 				name, ingressName, ingress.Protocol,
 			))
 		}

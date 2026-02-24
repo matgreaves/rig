@@ -346,6 +346,7 @@ func TestProtocolParity(t *testing.T) {
 		{"TCP", connect.TCP, spec.TCP},
 		{"HTTP", connect.HTTP, spec.HTTP},
 		{"GRPC", connect.GRPC, spec.GRPC},
+		{"Kafka", connect.Kafka, spec.Kafka},
 	}
 	for _, tc := range cases {
 		if string(tc.connectVal) != string(tc.specVal) {
@@ -356,9 +357,10 @@ func TestProtocolParity(t *testing.T) {
 	// Also verify spec hasn't added protocols that connect doesn't know about.
 	specProtos := spec.ValidProtocols()
 	connectKnown := map[string]bool{
-		string(connect.TCP):  true,
-		string(connect.HTTP): true,
-		string(connect.GRPC): true,
+		string(connect.TCP):   true,
+		string(connect.HTTP):  true,
+		string(connect.GRPC):  true,
+		string(connect.Kafka): true,
 	}
 	for _, p := range specProtos {
 		if !connectKnown[string(p)] {

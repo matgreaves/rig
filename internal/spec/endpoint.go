@@ -6,20 +6,21 @@ import "strconv"
 type Protocol string
 
 const (
-	TCP  Protocol = "tcp"
-	HTTP Protocol = "http"
-	GRPC Protocol = "grpc"
+	TCP   Protocol = "tcp"
+	HTTP  Protocol = "http"
+	GRPC  Protocol = "grpc"
+	Kafka Protocol = "kafka"
 )
 
 // ValidProtocols returns the set of recognised protocol values.
 func ValidProtocols() []Protocol {
-	return []Protocol{TCP, HTTP, GRPC}
+	return []Protocol{TCP, HTTP, GRPC, Kafka}
 }
 
 // Valid reports whether p is a recognised protocol.
 func (p Protocol) Valid() bool {
 	switch p {
-	case TCP, HTTP, GRPC:
+	case TCP, HTTP, GRPC, Kafka:
 		return true
 	}
 	return false
