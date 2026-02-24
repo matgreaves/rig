@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/proxy"
@@ -472,12 +473,18 @@ func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackTyp
 		},
 	})
 
-	ev, err := sc.log.WaitFor(ctx, func(e Event) bool {
+	callbackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	ev, err := sc.log.WaitFor(callbackCtx, func(e Event) bool {
 		return e.Type == EventCallbackResponse &&
 			e.Result != nil &&
 			e.Result.RequestID == requestID
 	})
 	if err != nil {
+		if callbackCtx.Err() != nil && ctx.Err() == nil {
+			return fmt.Errorf("callback %q response not received within 30s — client may have disconnected", name)
+		}
 		return fmt.Errorf("callback %q: waiting for response: %w", name, err)
 	}
 
