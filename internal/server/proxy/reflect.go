@@ -1,9 +1,12 @@
 package proxy
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -207,16 +210,13 @@ func (d *grpcDecoder) Decode(svc, method string, framedData []byte, isRequest bo
 }
 
 // unpackFrame strips the first gRPC length-prefixed frame header (5 bytes:
-// 1 byte compressed flag + 4 bytes big-endian length). Returns nil for
-// compressed, incomplete, or empty frames.
+// 1 byte compressed flag + 4 bytes big-endian length) and returns the raw
+// protobuf message bytes. Handles both uncompressed and gzip-compressed frames.
 func unpackFrame(data []byte) []byte {
 	if len(data) < 5 {
 		return nil
 	}
 	compressed := data[0]
-	if compressed != 0 {
-		return nil // compressed frame, can't decode
-	}
 	msgLen := binary.BigEndian.Uint32(data[1:5])
 	if msgLen == 0 {
 		return nil // empty frame
@@ -225,5 +225,19 @@ func unpackFrame(data []byte) []byte {
 	if uint32(len(payload)) < msgLen {
 		return nil // incomplete frame
 	}
-	return payload[:msgLen]
+	payload = payload[:msgLen]
+	if compressed == 0 {
+		return payload
+	}
+	// gRPC uses gzip compression by default.
+	gr, err := gzip.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		return nil
+	}
+	defer gr.Close()
+	raw, err := io.ReadAll(gr)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
