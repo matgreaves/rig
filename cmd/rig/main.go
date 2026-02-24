@@ -22,6 +22,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "rig logs: %v\n", err)
 			os.Exit(1)
 		}
+	case "ls":
+		if err := runLs(os.Args[2:]); err != nil {
+			if err != errNoResults {
+				fmt.Fprintf(os.Stderr, "rig ls: %v\n", err)
+			}
+			os.Exit(1)
+		}
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -35,8 +42,9 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: rig <command> [flags]
 
 Commands:
-  traffic <file.jsonl>   Inspect traffic captured by rigd
-  logs    <file.jsonl>   View service logs
+  traffic <file>         Inspect traffic captured by rigd
+  logs    <file>         View service logs
+  ls      [pattern]      List recent log files
 
 Run 'rig <command> --help' for command-specific flags.
 `)

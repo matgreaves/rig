@@ -42,6 +42,26 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples
 - `internal/testdata/` — test service fixtures (echo, tcpecho, userapi, fail)
 - `internal/integration/` — integration tests (require server + testdata)
 
+## Debugging test failures with `rig` CLI
+
+The `rig` CLI (`cmd/rig/`) inspects event logs written by `rigd`. Each test that calls `rig.Up` produces a `.jsonl` log file in `{RIG_DIR}/logs/`. Since `make test` runs many tests in parallel, always use the test name to find the right log — "most recent" is meaningless with parallel runs.
+
+```bash
+# See what failed
+rig ls --failed
+
+# Inspect a specific test's traffic (name matching is fuzzy — no path needed)
+rig traffic OrderFlow
+rig logs OrderFlow
+
+# Compose for scripting
+rig traffic $(rig ls --failed -q -n1)               # most recent failure
+rig ls --failed -q | xargs -I{} rig traffic {}      # all failures
+rig ls --failed -q -n1 Order                         # most recent OrderFlow failure
+```
+
+Key flags: `--failed`/`--passed` filter by outcome, `-q` outputs file paths for piping, `-n N` limits to N most recent results.
+
 ## Key conventions
 
 - Service types are registered in `internal/cmd/rigd/main.go` and `internal/integration/integration_test.go:startTestServer`

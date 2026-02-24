@@ -257,7 +257,7 @@ func sortedServiceNames(services map[string]spec.Service) []string {
 }
 
 func generateID() string {
-	b := make([]byte, 8)
+	b := make([]byte, 4)
 	rand.Read(b)
-	return fmt.Sprintf("%x", b)
+	return fmt.Sprintf("%x-%x", time.Now().UnixMilli(), b)
 }
