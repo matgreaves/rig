@@ -11,9 +11,10 @@ import "fmt"
 type Protocol string
 
 const (
-	TCP  Protocol = "tcp"
-	HTTP Protocol = "http"
-	GRPC Protocol = "grpc"
+	TCP   Protocol = "tcp"
+	HTTP  Protocol = "http"
+	GRPC  Protocol = "grpc"
+	Kafka Protocol = "kafka"
 )
 
 // Endpoint is a resolved service endpoint with connection helpers.

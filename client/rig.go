@@ -25,9 +25,10 @@ type (
 )
 
 const (
-	TCP  = connect.TCP
-	HTTP = connect.HTTP
-	GRPC = connect.GRPC
+	TCP   = connect.TCP
+	HTTP  = connect.HTTP
+	GRPC  = connect.GRPC
+	Kafka = connect.Kafka
 )
 
 // Services maps service names to their definitions.
@@ -41,7 +42,7 @@ type ServiceDef interface {
 }
 
 // IngressDef defines an endpoint a service exposes. Use the IngressHTTP,
-// IngressTCP, or IngressGRPC constructors for the common case. For full
+// IngressTCP, IngressGRPC, or IngressKafka constructors for the common case. For full
 // control (health check overrides, attributes, container ports), use a
 // struct literal:
 //
@@ -65,6 +66,9 @@ func IngressTCP() IngressDef { return IngressDef{Protocol: TCP} }
 
 // IngressGRPC returns an IngressDef for a gRPC endpoint.
 func IngressGRPC() IngressDef { return IngressDef{Protocol: GRPC} }
+
+// IngressKafka returns an IngressDef for a Kafka endpoint.
+func IngressKafka() IngressDef { return IngressDef{Protocol: Kafka} }
 
 // ReadyDef overrides the health check for an ingress.
 type ReadyDef struct {
