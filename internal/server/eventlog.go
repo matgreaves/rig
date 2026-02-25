@@ -78,13 +78,13 @@ type CallbackRequest struct {
 
 // WiringContext provides resolved endpoint information to callbacks.
 // All hooks and start callbacks receive the full wiring: Ingresses,
-// Egresses, TempDir, and EnvDir.
+// Egresses, TempDir, and EnvDir. Endpoints are resolved — all attribute
+// templates have been expanded to concrete values.
 type WiringContext struct {
-	Ingresses  map[string]spec.Endpoint `json:"ingresses,omitempty"`
-	Egresses   map[string]spec.Endpoint `json:"egresses,omitempty"`
-	TempDir    string                   `json:"temp_dir,omitempty"`
-	EnvDir     string                   `json:"env_dir,omitempty"`
-	Attributes map[string]string        `json:"attributes,omitempty"`
+	Ingresses map[string]spec.ResolvedEndpoint `json:"ingresses,omitempty"`
+	Egresses  map[string]spec.ResolvedEndpoint `json:"egresses,omitempty"`
+	TempDir   string                           `json:"temp_dir,omitempty"`
+	EnvDir    string                           `json:"env_dir,omitempty"`
 }
 
 // CallbackResponse is posted by the client after handling a callback request.
@@ -181,11 +181,9 @@ type Event struct {
 	EnvDir      string              `json:"env_dir,omitempty"`
 	Message     string              `json:"message,omitempty"`
 	// Ingresses is populated on environment.up. It maps service name to a
-	// map of ingress name to endpoint, giving clients everything they need
-	// to connect to any service without a follow-up GET request.
-	// It uses spec.Endpoint directly — the same type client libraries are
-	// built against — so test and production wiring are handled identically.
-	Ingresses map[string]map[string]spec.Endpoint `json:"ingresses,omitempty"`
+	// map of ingress name to resolved endpoint, giving clients everything
+	// they need to connect to any service without a follow-up GET request.
+	Ingresses map[string]map[string]spec.ResolvedEndpoint `json:"ingresses,omitempty"`
 	Timestamp time.Time                           `json:"timestamp"`
 }
 

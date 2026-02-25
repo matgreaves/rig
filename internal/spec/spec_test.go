@@ -314,14 +314,14 @@ func TestResolvedEnvironmentRoundTrip(t *testing.T) {
 		Name: "test-env",
 		Services: map[string]spec.ResolvedService{
 			"my-api": {
-				Ingresses: map[string]spec.Endpoint{
+				Ingresses: map[string]spec.ResolvedEndpoint{
 					"default": {
 						Host:     "127.0.0.1",
 						Port:     8080,
 						Protocol: spec.HTTP,
 					},
 				},
-				Egresses: map[string]spec.Endpoint{
+				Egresses: map[string]spec.ResolvedEndpoint{
 					"database": {
 						Host:     "127.0.0.1",
 						Port:     54321,
@@ -362,152 +362,189 @@ func TestResolvedEnvironmentRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRewriteAddressAttrs(t *testing.T) {
-	t.Run("AllKinds", func(t *testing.T) {
-		source := spec.Endpoint{
-			Host:     "10.0.0.1",
-			Port:     5432,
-			Protocol: spec.TCP,
-			Attributes: map[string]any{
-				"PGHOST":     "10.0.0.1",
-				"PGPORT":     "5432",
-				"ADDR":       "10.0.0.1:5432",
-				"PGDATABASE": "mydb",
-			},
-			AddressAttrs: map[string]spec.AddrAttr{
-				"PGHOST": spec.AttrHost,
-				"PGPORT": spec.AttrPort,
-				"ADDR":   spec.AttrHostPort,
-			},
-		}
-
-		got := spec.RewriteAddressAttrs(source, "127.0.0.1", 9999)
-
-		if got["PGHOST"] != "127.0.0.1" {
-			t.Errorf("PGHOST = %v, want 127.0.0.1", got["PGHOST"])
-		}
-		if got["PGPORT"] != "9999" {
-			t.Errorf("PGPORT = %v, want 9999", got["PGPORT"])
-		}
-		if got["ADDR"] != "127.0.0.1:9999" {
-			t.Errorf("ADDR = %v, want 127.0.0.1:9999", got["ADDR"])
-		}
-		if got["PGDATABASE"] != "mydb" {
-			t.Errorf("PGDATABASE = %v, want mydb (should be unchanged)", got["PGDATABASE"])
-		}
-	})
-
-	t.Run("NilAttributes", func(t *testing.T) {
-		source := spec.Endpoint{
-			Host:     "10.0.0.1",
-			Port:     5432,
-			Protocol: spec.TCP,
-		}
-		got := spec.RewriteAddressAttrs(source, "127.0.0.1", 9999)
-		if got != nil {
-			t.Errorf("expected nil, got %v", got)
-		}
-	})
-
-	t.Run("EmptyAttributes", func(t *testing.T) {
-		source := spec.Endpoint{
-			Host:       "10.0.0.1",
-			Port:       5432,
-			Protocol:   spec.TCP,
-			Attributes: map[string]any{},
-		}
-		got := spec.RewriteAddressAttrs(source, "127.0.0.1", 9999)
-		if len(got) != 0 {
-			t.Errorf("expected empty map, got %v", got)
-		}
-	})
-
-	t.Run("NoAddressAttrs", func(t *testing.T) {
-		source := spec.Endpoint{
-			Host:     "10.0.0.1",
-			Port:     5432,
-			Protocol: spec.TCP,
-			Attributes: map[string]any{
-				"PGDATABASE": "mydb",
-			},
-		}
-		got := spec.RewriteAddressAttrs(source, "127.0.0.1", 9999)
-		if got["PGDATABASE"] != "mydb" {
-			t.Errorf("PGDATABASE = %v, want mydb", got["PGDATABASE"])
-		}
-	})
-
-	t.Run("DoesNotMutateSource", func(t *testing.T) {
-		source := spec.Endpoint{
-			Host:     "10.0.0.1",
-			Port:     5432,
-			Protocol: spec.TCP,
-			Attributes: map[string]any{
-				"PGHOST": "10.0.0.1",
-			},
-			AddressAttrs: map[string]spec.AddrAttr{
-				"PGHOST": spec.AttrHost,
-			},
-		}
-		spec.RewriteAddressAttrs(source, "127.0.0.1", 9999)
-		if source.Attributes["PGHOST"] != "10.0.0.1" {
-			t.Error("source attributes were mutated")
-		}
-	})
-}
-
-func TestEndpointAddressAttrsRoundTrip(t *testing.T) {
+func TestResolveAttributes_Basic(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "127.0.0.1",
+		Host:     "10.0.0.1",
 		Port:     5432,
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
-			"PGHOST": "127.0.0.1",
-			"PGPORT": "5432",
-		},
-		AddressAttrs: map[string]spec.AddrAttr{
-			"PGHOST": spec.AttrHost,
-			"PGPORT": spec.AttrPort,
+			"PGHOST":     "${HOST}",
+			"PGPORT":     "${PORT}",
+			"ADDR":       "${HOSTPORT}",
+			"PGDATABASE": "mydb",
 		},
 	}
 
-	data, err := json.Marshal(ep)
+	got, err := spec.ResolveAttributes(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var got spec.Endpoint
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatal(err)
+	if got["PGHOST"] != "10.0.0.1" {
+		t.Errorf("PGHOST = %v, want 10.0.0.1", got["PGHOST"])
 	}
-
-	if got.AddressAttrs["PGHOST"] != spec.AttrHost {
-		t.Errorf("PGHOST AddrAttr = %v, want %v", got.AddressAttrs["PGHOST"], spec.AttrHost)
+	if got["PGPORT"] != "5432" {
+		t.Errorf("PGPORT = %v, want 5432", got["PGPORT"])
 	}
-	if got.AddressAttrs["PGPORT"] != spec.AttrPort {
-		t.Errorf("PGPORT AddrAttr = %v, want %v", got.AddressAttrs["PGPORT"], spec.AttrPort)
+	if got["ADDR"] != "10.0.0.1:5432" {
+		t.Errorf("ADDR = %v, want 10.0.0.1:5432", got["ADDR"])
+	}
+	if got["PGDATABASE"] != "mydb" {
+		t.Errorf("PGDATABASE = %v, want mydb (should be unchanged)", got["PGDATABASE"])
 	}
 }
 
-func TestEndpointOmitsEmptyAddressAttrs(t *testing.T) {
+func TestResolveAttributes_CompoundBuiltins(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     8080,
-		Protocol: spec.HTTP,
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"PGHOST":       "${HOST}",
+			"PGPORT":       "${PORT}",
+			"DATABASE_URL": "postgres://${HOST}:${PORT}/mydb",
+		},
 	}
 
-	data, err := json.Marshal(ep)
+	got, err := spec.ResolveAttributes(ep)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if got["PGHOST"] != "10.0.0.1" {
+		t.Errorf("PGHOST = %v, want 10.0.0.1", got["PGHOST"])
+	}
+	if got["DATABASE_URL"] != "postgres://10.0.0.1:5432/mydb" {
+		t.Errorf("DATABASE_URL = %v, want postgres://10.0.0.1:5432/mydb", got["DATABASE_URL"])
+	}
+}
+
+func TestResolveAttributes_NonBuiltinReturnsError(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"PGHOST":       "${HOST}",
+			"DATABASE_URL": "postgres://${PGHOST}:${PORT}/mydb",
+		},
+	}
+	_, err := spec.ResolveAttributes(ep)
+	if err == nil {
+		t.Fatal("expected error for non-builtin variable reference")
+	}
+	if !strings.Contains(err.Error(), "PGHOST") {
+		t.Errorf("error should mention PGHOST, got: %s", err)
+	}
+}
+
+func TestResolveAttributes_NilAttributes(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+	}
+	got, err := spec.ResolveAttributes(ep)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if got != nil {
+		t.Errorf("expected nil, got %v", got)
+	}
+}
 
-	if _, ok := raw["address_attrs"]; ok {
-		t.Error("expected address_attrs to be omitted from JSON when nil")
+func TestResolveAttributes_EmptyAttributes(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:       "10.0.0.1",
+		Port:       5432,
+		Protocol:   spec.TCP,
+		Attributes: map[string]any{},
+	}
+	got, err := spec.ResolveAttributes(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %v", got)
+	}
+}
+
+func TestResolveAttributes_NoTemplates(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"PGDATABASE": "mydb",
+			"PGUSER":     "postgres",
+		},
+	}
+	got, err := spec.ResolveAttributes(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["PGDATABASE"] != "mydb" {
+		t.Errorf("PGDATABASE = %v, want mydb", got["PGDATABASE"])
+	}
+	if got["PGUSER"] != "postgres" {
+		t.Errorf("PGUSER = %v, want postgres", got["PGUSER"])
+	}
+}
+
+func TestResolveAttributes_DoesNotMutateSource(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"PGHOST": "${HOST}",
+		},
+	}
+	if _, err := spec.ResolveAttributes(ep); err != nil {
+		t.Fatal(err)
+	}
+	if ep.Attributes["PGHOST"] != "${HOST}" {
+		t.Error("source attributes were mutated")
+	}
+}
+
+func TestResolveAttributes_UnknownVarReturnsError(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"ADDR": "${HOOST}/foo",
+		},
+	}
+	_, err := spec.ResolveAttributes(ep)
+	if err == nil {
+		t.Fatal("expected error for unknown variable reference")
+	}
+	if !strings.Contains(err.Error(), "HOOST") {
+		t.Errorf("error should mention the unknown var, got: %s", err)
+	}
+}
+
+func TestResolveAttributes_NonStringValue(t *testing.T) {
+	ep := spec.Endpoint{
+		Host:     "10.0.0.1",
+		Port:     5432,
+		Protocol: spec.TCP,
+		Attributes: map[string]any{
+			"MAX_CONNS": 100,
+			"PGHOST":    "${HOST}",
+		},
+	}
+	got, err := spec.ResolveAttributes(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["MAX_CONNS"] != 100 {
+		t.Errorf("MAX_CONNS = %v, want 100", got["MAX_CONNS"])
+	}
+	if got["PGHOST"] != "10.0.0.1" {
+		t.Errorf("PGHOST = %v, want 10.0.0.1", got["PGHOST"])
 	}
 }
 

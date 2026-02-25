@@ -144,7 +144,9 @@ Runs a PostgreSQL container with automatic wiring.
 
 - **No user-defined ingress**: fixed TCP on port 5432
 - **Default image**: `postgres:16-alpine`
-- **Published attributes**: `PGHOST`, `PGPORT`, `PGDATABASE` (= service name), `PGUSER`, `PGPASSWORD`
+- **Published attributes**: `PGHOST` (`${HOST}`), `PGPORT` (`${PORT}`), `PGDATABASE` (= service name), `PGUSER`, `PGPASSWORD`
+
+Address-derived attributes use template variables (`${HOST}`, `${PORT}`) and are resolved automatically when the endpoint is consumed. This means they stay correct through container port remapping and proxy address rewriting.
 
 ```go
 rig.Postgres().
@@ -158,7 +160,9 @@ Downloads and runs a Temporal dev server.
 - **Default ingresses**: `"default"` (gRPC) + `"ui"` (HTTP)
 - **Default CLI version**: `1.5.1`
 - **Default namespace**: `"default"`
-- **Published attributes**: `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`
+- **Published attributes**: `TEMPORAL_ADDRESS` (`${HOSTPORT}`), `TEMPORAL_NAMESPACE`
+
+`TEMPORAL_ADDRESS` uses the `${HOSTPORT}` template variable, which resolves to `host:port` — staying correct through proxy address rewriting.
 
 ```go
 rig.Temporal().

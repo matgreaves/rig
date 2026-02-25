@@ -89,6 +89,38 @@ func TestAdjustIngressEndpoints_DoesNotMutateOriginal(t *testing.T) {
 	}
 }
 
+func TestAdjustIngressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
+	ingresses := map[string]spec.Endpoint{
+		"default": {
+			Host:     "127.0.0.1",
+			Port:     54321,
+			Protocol: spec.TCP,
+			Attributes: map[string]any{
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
+				"PGDATABASE": "mydb",
+			},
+		},
+	}
+	specs := map[string]spec.IngressSpec{
+		"default": {Protocol: spec.TCP, ContainerPort: 5432},
+	}
+
+	adjusted := adjustIngressEndpoints(ingresses, specs)
+
+	ep := adjusted["default"]
+	// Templates should pass through unchanged.
+	if ep.Attributes["PGHOST"] != "${HOST}" {
+		t.Errorf("PGHOST = %v, want ${HOST}", ep.Attributes["PGHOST"])
+	}
+	if ep.Attributes["PGPORT"] != "${PORT}" {
+		t.Errorf("PGPORT = %v, want ${PORT}", ep.Attributes["PGPORT"])
+	}
+	if ep.Attributes["PGDATABASE"] != "mydb" {
+		t.Errorf("PGDATABASE = %v, want mydb", ep.Attributes["PGDATABASE"])
+	}
+}
+
 func TestAdjustEgressEndpoints(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
 		"database": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP},
@@ -105,6 +137,35 @@ func TestAdjustEgressEndpoints(t *testing.T) {
 	// Ports unchanged.
 	if adjusted["database"].Port != 5432 {
 		t.Errorf("database port = %d, want 5432", adjusted["database"].Port)
+	}
+}
+
+func TestAdjustEgressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
+	egresses := map[string]spec.Endpoint{
+		"database": {
+			Host:     "127.0.0.1",
+			Port:     5432,
+			Protocol: spec.TCP,
+			Attributes: map[string]any{
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
+				"PGDATABASE": "mydb",
+			},
+		},
+	}
+
+	adjusted := adjustEgressEndpoints(egresses, "host.docker.internal")
+
+	ep := adjusted["database"]
+	// Templates should pass through unchanged.
+	if ep.Attributes["PGHOST"] != "${HOST}" {
+		t.Errorf("PGHOST = %v, want ${HOST}", ep.Attributes["PGHOST"])
+	}
+	if ep.Attributes["PGPORT"] != "${PORT}" {
+		t.Errorf("PGPORT = %v, want ${PORT}", ep.Attributes["PGPORT"])
+	}
+	if ep.Attributes["PGDATABASE"] != "mydb" {
+		t.Errorf("PGDATABASE = %v, want mydb", ep.Attributes["PGDATABASE"])
 	}
 }
 

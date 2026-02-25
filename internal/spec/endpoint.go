@@ -1,6 +1,11 @@
 package spec
 
-import "strconv"
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
 
 // Protocol identifies the application-layer protocol an ingress speaks.
 type Protocol string
@@ -26,46 +31,108 @@ func (p Protocol) Valid() bool {
 	return false
 }
 
-// AddrAttr declares how an endpoint attribute derives from the address.
-type AddrAttr string
-
-const (
-	AttrHost     AddrAttr = "host"     // value = ep.Host
-	AttrPort     AddrAttr = "port"     // value = strconv.Itoa(ep.Port)
-	AttrHostPort AddrAttr = "hostport" // value = ep.Host + ":" + strconv.Itoa(ep.Port)
-)
-
 // Endpoint is a fully resolved, concrete address produced at runtime.
 // The spec never contains endpoints — they are created by the server
 // during the publish phase when ports are allocated.
+//
+// Attribute values may contain ${VAR} template references that are
+// resolved at the point of consumption (env var emission, environment.up
+// event) via ResolveAttributes. Only built-in variables are available:
+// HOST, PORT, and HOSTPORT — seeded from the endpoint's address.
+//
+// Internal wiring between services keeps templates so container/proxy
+// address adjustment is just changing ep.Host/ep.Port — no attribute
+// rewriting needed.
 type Endpoint struct {
-	Host         string              `json:"host"`
-	Port         int                 `json:"port"`
-	Protocol     Protocol            `json:"protocol"`
-	Attributes   map[string]any      `json:"attributes,omitempty"`
-	AddressAttrs map[string]AddrAttr `json:"address_attrs,omitempty"`
+	Host       string         `json:"host"`
+	Port       int            `json:"port"`
+	Protocol   Protocol       `json:"protocol"`
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
-// RewriteAddressAttrs returns a copy of source.Attributes with entries
-// declared in source.AddressAttrs rewritten to reflect newHost and newPort.
-// Non-declared attributes are copied unchanged.
-func RewriteAddressAttrs(source Endpoint, newHost string, newPort int) map[string]any {
-	if len(source.Attributes) == 0 {
-		return source.Attributes
+// ResolvedEndpoint is an Endpoint with all attribute templates expanded to
+// concrete values. Create via Endpoint.Resolve(). Output boundary functions
+// (BuildServiceEnv, buildResolvedEnvironment, dispatchCallback) should accept
+// this type to ensure templates are never leaked to consumers.
+type ResolvedEndpoint struct {
+	Host       string         `json:"host"`
+	Port       int            `json:"port"`
+	Protocol   Protocol       `json:"protocol"`
+	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// Resolve expands ${VAR} template references in ep.Attributes and returns
+// a ResolvedEndpoint with concrete values.
+//
+// Templates may reference built-in variables only: HOST, PORT, HOSTPORT.
+// Returns an error if a template references an unknown variable.
+func (ep Endpoint) Resolve() (ResolvedEndpoint, error) {
+	re := ResolvedEndpoint{
+		Host:     ep.Host,
+		Port:     ep.Port,
+		Protocol: ep.Protocol,
 	}
-	attrs := make(map[string]any, len(source.Attributes))
-	for k, v := range source.Attributes {
-		attrs[k] = v
+	if ep.Attributes == nil {
+		return re, nil
 	}
-	for key, kind := range source.AddressAttrs {
-		switch kind {
-		case AttrHost:
-			attrs[key] = newHost
-		case AttrPort:
-			attrs[key] = strconv.Itoa(newPort)
-		case AttrHostPort:
-			attrs[key] = newHost + ":" + strconv.Itoa(newPort)
+	attrs, err := ResolveAttributes(ep)
+	if err != nil {
+		return re, err
+	}
+	re.Attributes = attrs
+	return re, nil
+}
+
+// ResolveAttributes expands ${VAR} template references in ep.Attributes
+// against the endpoint's built-in variables (HOST, PORT, HOSTPORT).
+//
+// Returns nil if ep.Attributes is nil. Returns a new map — the original
+// ep.Attributes is never mutated.
+//
+// Returns an error if a template references an unknown variable
+// (e.g. ${TYPO} or ${HOOST}).
+func ResolveAttributes(ep Endpoint) (map[string]any, error) {
+	if ep.Attributes == nil {
+		return nil, nil
+	}
+	if len(ep.Attributes) == 0 {
+		return make(map[string]any), nil
+	}
+
+	portStr := strconv.Itoa(ep.Port)
+	builtins := map[string]string{
+		"HOST":     ep.Host,
+		"PORT":     portStr,
+		"HOSTPORT": ep.Host + ":" + portStr,
+	}
+
+	resolved := make(map[string]any, len(ep.Attributes))
+	for k, v := range ep.Attributes {
+		s, ok := v.(string)
+		if !ok {
+			resolved[k] = v
+			continue
 		}
+		if !strings.Contains(s, "$") {
+			resolved[k] = s
+			continue
+		}
+		var unknownVar string
+		expanded := os.Expand(s, func(key string) string {
+			if val, ok := builtins[key]; ok {
+				return val
+			}
+			unknownVar = key
+			return ""
+		})
+		if unknownVar != "" {
+			return nil, fmt.Errorf(
+				"attribute %q template %q references unknown variable ${%s}; "+
+					"only HOST, PORT, and HOSTPORT are available",
+				k, s, unknownVar,
+			)
+		}
+		resolved[k] = expanded
 	}
-	return attrs
+	return resolved, nil
 }

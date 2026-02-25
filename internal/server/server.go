@@ -210,8 +210,16 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 			for range ch {
 				count++
 				if count >= need {
-					resolved := buildResolvedEnvironment(inst)
-					ingresses := make(map[string]map[string]spec.Endpoint, len(resolved.Services))
+					resolved, err := buildResolvedEnvironment(inst)
+					if err != nil {
+						envLog.Publish(Event{
+							Type:        EventEnvironmentFailing,
+							Environment: env.Name,
+							Error:       fmt.Sprintf("resolve attributes: %s", err),
+						})
+						return
+					}
+					ingresses := make(map[string]map[string]spec.ResolvedEndpoint, len(resolved.Services))
 					for svcName, svc := range resolved.Services {
 						ingresses[svcName] = svc.Ingresses
 					}
@@ -249,7 +257,12 @@ func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, buildResolvedEnvironment(inst))
+	resolved, err := buildResolvedEnvironment(inst)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "resolve attributes: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resolved)
 }
 
 // clientEvent is the wire format for events posted by the client SDK.
@@ -428,15 +441,22 @@ func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) (*envInstan
 // buildResolvedEnvironment scans the event log to construct a point-in-time
 // snapshot of the environment: resolved ingress/egress endpoints and service
 // statuses.
-func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
+func buildResolvedEnvironment(inst *envInstance) (spec.ResolvedEnvironment, error) {
 	events := inst.log.LifecycleEvents()
 
-	services := make(map[string]spec.ResolvedService, len(inst.spec.Services))
+	// Intermediate state uses spec.Endpoint (may contain templates).
+	type svcState struct {
+		ingresses map[string]spec.Endpoint
+		egresses  map[string]spec.Endpoint
+		status    spec.ServiceStatus
+	}
+
+	states := make(map[string]*svcState, len(inst.spec.Services))
 	for name := range inst.spec.Services {
-		services[name] = spec.ResolvedService{
-			Ingresses: make(map[string]spec.Endpoint),
-			Egresses:  make(map[string]spec.Endpoint),
-			Status:    spec.StatusPending,
+		states[name] = &svcState{
+			ingresses: make(map[string]spec.Endpoint),
+			egresses:  make(map[string]spec.Endpoint),
+			status:    spec.StatusPending,
 		}
 	}
 
@@ -444,14 +464,14 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 	proxyEndpoints := make(map[string]map[string]spec.Endpoint) // service → ingress → proxy endpoint
 
 	for _, e := range events {
-		svc, ok := services[e.Service]
+		st, ok := states[e.Service]
 		if !ok {
 			continue
 		}
 		switch e.Type {
 		case EventIngressPublished:
 			if e.Endpoint != nil && e.Ingress != "" {
-				svc.Ingresses[e.Ingress] = *e.Endpoint
+				st.ingresses[e.Ingress] = *e.Endpoint
 			}
 		case EventProxyPublished:
 			if e.Endpoint != nil && e.Ingress != "" {
@@ -461,52 +481,84 @@ func buildResolvedEnvironment(inst *envInstance) spec.ResolvedEnvironment {
 				proxyEndpoints[e.Service][e.Ingress] = *e.Endpoint
 			}
 		case EventServiceStarting:
-			svc.Status = spec.StatusStarting
+			st.status = spec.StatusStarting
 		case EventServiceHealthy:
-			svc.Status = spec.StatusHealthy
+			st.status = spec.StatusHealthy
 		case EventServiceReady:
-			svc.Status = spec.StatusReady
+			st.status = spec.StatusReady
 		case EventServiceFailed:
-			svc.Status = spec.StatusFailed
+			st.status = spec.StatusFailed
 		case EventServiceStopping:
-			svc.Status = spec.StatusStopping
+			st.status = spec.StatusStopping
 		case EventServiceStopped:
-			svc.Status = spec.StatusStopped
+			st.status = spec.StatusStopped
 		default:
 			continue
 		}
-		services[e.Service] = svc
 	}
 
 	// Reconstruct egresses: for each service's egress spec, look up the
-	// already-resolved ingress of the target service.
+	// ingress of the target service.
 	for name, svcSpec := range inst.spec.Services {
-		svc := services[name]
+		st := states[name]
 		for egressName, egressSpec := range svcSpec.Egresses {
-			if target, ok := services[egressSpec.Service]; ok {
-				if ep, ok := target.Ingresses[egressSpec.Ingress]; ok {
-					svc.Egresses[egressName] = ep
+			if target, ok := states[egressSpec.Service]; ok {
+				if ep, ok := target.ingresses[egressSpec.Ingress]; ok {
+					st.egresses[egressName] = ep
 				}
 			}
 		}
-		services[name] = svc
 	}
 
 	// When observing, replace ingress endpoints with proxy endpoints so
 	// env.Endpoint() returns the proxy address.
 	for svcName, proxyMap := range proxyEndpoints {
-		svc := services[svcName]
+		st := states[svcName]
 		for ingressName, proxyEP := range proxyMap {
-			svc.Ingresses[ingressName] = proxyEP
+			st.ingresses[ingressName] = proxyEP
 		}
-		services[svcName] = svc
+	}
+
+	// Resolve attribute templates and build the final ResolvedService map.
+	services := make(map[string]spec.ResolvedService, len(states))
+	for name, st := range states {
+		ri, err := resolveEndpointMap(st.ingresses)
+		if err != nil {
+			return spec.ResolvedEnvironment{}, fmt.Errorf("service %q ingresses: %w", name, err)
+		}
+		re, err := resolveEndpointMap(st.egresses)
+		if err != nil {
+			return spec.ResolvedEnvironment{}, fmt.Errorf("service %q egresses: %w", name, err)
+		}
+		services[name] = spec.ResolvedService{
+			Ingresses: ri,
+			Egresses:  re,
+			Status:    st.status,
+		}
 	}
 
 	return spec.ResolvedEnvironment{
 		ID:       inst.id,
 		Name:     inst.spec.Name,
 		Services: services,
+	}, nil
+}
+
+// resolveEndpointMap resolves attribute templates on each endpoint,
+// returning a map of ResolvedEndpoint values.
+func resolveEndpointMap(endpoints map[string]spec.Endpoint) (map[string]spec.ResolvedEndpoint, error) {
+	if len(endpoints) == 0 {
+		return nil, nil
 	}
+	resolved := make(map[string]spec.ResolvedEndpoint, len(endpoints))
+	for name, ep := range endpoints {
+		re, err := ep.Resolve()
+		if err != nil {
+			return nil, fmt.Errorf("endpoint %q: %w", name, err)
+		}
+		resolved[name] = re
+	}
+	return resolved, nil
 }
 
 // contextEvents is the number of lifecycle events shown before the trigger

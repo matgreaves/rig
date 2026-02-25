@@ -52,11 +52,8 @@ func (Temporal) Publish(_ context.Context, params PublishParams) (map[string]spe
 		if ep.Attributes == nil {
 			ep.Attributes = make(map[string]any)
 		}
-		connect.TemporalAddress.Set(ep.Attributes, fmt.Sprintf("%s:%d", ep.Host, ep.Port))
+		connect.TemporalAddress.Set(ep.Attributes, "${HOSTPORT}")
 		connect.TemporalNamespace.Set(ep.Attributes, cfg.Namespace)
-		ep.AddressAttrs = map[string]spec.AddrAttr{
-			"TEMPORAL_ADDRESS": spec.AttrHostPort,
-		}
 		endpoints["default"] = ep
 	}
 	return endpoints, nil

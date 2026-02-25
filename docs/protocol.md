@@ -265,17 +265,13 @@ Resolved at runtime by the server. Never appears in the spec — only in events 
 {
   "host": "127.0.0.1",
   "port": 54321,
-  "protocol": "http",
+  "protocol": "tcp",
   "attributes": {
     "PGHOST": "127.0.0.1",
     "PGPORT": "54321",
     "PGUSER": "postgres",
     "PGPASSWORD": "postgres",
     "PGDATABASE": "test_abc123"
-  },
-  "address_attrs": {
-    "PGHOST": "host",
-    "PGPORT": "port"
   }
 }
 ```
@@ -285,15 +281,26 @@ Resolved at runtime by the server. Never appears in the spec — only in events 
 | `host` | string | Hostname or IP |
 | `port` | integer | Port number |
 | `protocol` | string | `"tcp"`, `"http"`, `"grpc"`, `"kafka"` |
-| `attributes` | object | Key-value attributes (typed as `any` — strings, numbers, booleans) |
-| `address_attrs` | object | Declares which attributes derive from the address (`"host"`, `"port"`, `"hostport"`). Used by the proxy layer to rewrite attributes when the address changes. |
+| `attributes` | object | Key-value attributes (typed as `any` — strings, numbers, booleans). Attributes sent to clients are fully resolved; internally attributes may contain `${VAR}` template references. |
+
+### Attribute template variables
+
+Service type implementations store attribute values as templates referencing built-in variables. These are resolved before being sent to clients (in `environment.up` events and `GET /environments/{id}` responses).
+
+| Variable | Source | Example value |
+|----------|--------|---------------|
+| `HOST` | `ep.Host` | `127.0.0.1` |
+| `PORT` | `ep.Port` | `5432` |
+| `HOSTPORT` | `ep.Host:ep.Port` | `127.0.0.1:5432` |
+
+Only these three built-in variables are available. Templates use `${VAR}` syntax and are resolved in a single pass. Referencing an unknown variable is an error.
 
 Well-known attributes published by built-in service types:
 
-| Service | Attributes |
-|---------|-----------|
-| Postgres | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` |
-| Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` |
+| Service | Attributes | Template forms |
+|---------|-----------|---------------|
+| Postgres | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `PGHOST="${HOST}"`, `PGPORT="${PORT}"` |
+| Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` | `TEMPORAL_ADDRESS="${HOSTPORT}"` |
 
 ---
 

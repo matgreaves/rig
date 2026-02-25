@@ -302,7 +302,10 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			service: sc.name,
 		}
 
-		env := BuildServiceEnv(sc.name, sc.ingresses, sc.egresses, sc.tempDir, sc.envDir)
+		env, err := BuildServiceEnv(sc.name, sc.ingresses, sc.egresses, sc.tempDir, sc.envDir)
+		if err != nil {
+			return fmt.Errorf("build service env: %w", err)
+		}
 
 		runner := sc.svcType.Runner(service.StartParams{
 			ServiceName: sc.name,
@@ -317,7 +320,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			InstanceID:  sc.instanceID,
 			Stdout:      &teeWriter{logWriter, "stdout"},
 			Stderr:      &teeWriter{logWriter, "stderr"},
-			BuildEnv: func(ingresses, egresses map[string]spec.Endpoint) map[string]string {
+			BuildEnv: func(ingresses, egresses map[string]spec.Endpoint) (map[string]string, error) {
 				return BuildServiceEnv(sc.name, ingresses, egresses, sc.tempDir, sc.envDir)
 			},
 			Callback: func(ctx context.Context, name, callbackType string) error {
@@ -451,9 +454,17 @@ func emitEvent(sc *serviceContext, eventType EventType) run.Runner {
 // log and blocks until the response arrives. This is used both for hooks and
 // for client service type start callbacks.
 func dispatchCallback(ctx context.Context, sc *serviceContext, name, callbackType string) error {
+	ri, err := resolveEndpointMap(sc.ingresses)
+	if err != nil {
+		return fmt.Errorf("resolve ingress attributes: %w", err)
+	}
+	re, err := resolveEndpointMap(sc.egresses)
+	if err != nil {
+		return fmt.Errorf("resolve egress attributes: %w", err)
+	}
 	wiring := &WiringContext{
-		Ingresses: sc.ingresses,
-		Egresses:  sc.egresses,
+		Ingresses: ri,
+		Egresses:  re,
 		TempDir:   sc.tempDir,
 		EnvDir:    sc.envDir,
 	}

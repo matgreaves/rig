@@ -38,7 +38,7 @@ type StartParams struct {
 	// Service types that need to adjust endpoints for a different network
 	// namespace (e.g. containers) call this with modified endpoints instead
 	// of patching the flat Env map directly.
-	BuildEnv func(ingresses, egresses map[string]spec.Endpoint) map[string]string
+	BuildEnv func(ingresses, egresses map[string]spec.Endpoint) (map[string]string, error)
 
 	// Callback dispatches a callback request to the client SDK and blocks
 	// until the response arrives. Nil for types that don't use callbacks.

@@ -7,7 +7,7 @@ import (
 	"github.com/matgreaves/rig/internal/spec"
 )
 
-func TestForwarderEndpoint_RewritesAddressAttrs(t *testing.T) {
+func TestForwarderEndpoint_TemplateAttrsPassThrough(t *testing.T) {
 	f := &proxy.Forwarder{
 		ListenPort: 9999,
 		Target: spec.Endpoint{
@@ -15,13 +15,9 @@ func TestForwarderEndpoint_RewritesAddressAttrs(t *testing.T) {
 			Port:     5432,
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
-				"PGHOST":     "10.0.0.5",
-				"PGPORT":     "5432",
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
 				"PGDATABASE": "mydb",
-			},
-			AddressAttrs: map[string]spec.AddrAttr{
-				"PGHOST": spec.AttrHost,
-				"PGPORT": spec.AttrPort,
 			},
 		},
 	}
@@ -38,22 +34,18 @@ func TestForwarderEndpoint_RewritesAddressAttrs(t *testing.T) {
 		t.Errorf("Protocol = %q, want tcp", ep.Protocol)
 	}
 
-	// Address-derived attrs should reflect the proxy address.
-	if got := ep.Attributes["PGHOST"]; got != "127.0.0.1" {
-		t.Errorf("PGHOST = %v, want 127.0.0.1", got)
+	// Template attributes should be copied unchanged — they resolve
+	// against the proxy's Host/Port when consumed downstream.
+	if got := ep.Attributes["PGHOST"]; got != "${HOST}" {
+		t.Errorf("PGHOST = %v, want ${HOST}", got)
 	}
-	if got := ep.Attributes["PGPORT"]; got != "9999" {
-		t.Errorf("PGPORT = %v, want 9999", got)
+	if got := ep.Attributes["PGPORT"]; got != "${PORT}" {
+		t.Errorf("PGPORT = %v, want ${PORT}", got)
 	}
 
-	// Non-address attrs should be preserved.
+	// Non-template attrs should be preserved.
 	if got := ep.Attributes["PGDATABASE"]; got != "mydb" {
 		t.Errorf("PGDATABASE = %v, want mydb", got)
-	}
-
-	// AddressAttrs should be preserved for downstream rewriters.
-	if ep.AddressAttrs["PGHOST"] != spec.AttrHost {
-		t.Errorf("AddressAttrs[PGHOST] = %v, want %v", ep.AddressAttrs["PGHOST"], spec.AttrHost)
 	}
 }
 
@@ -65,26 +57,34 @@ func TestForwarderEndpoint_HostPort(t *testing.T) {
 			Port:     7233,
 			Protocol: spec.GRPC,
 			Attributes: map[string]any{
-				"TEMPORAL_ADDRESS":   "10.0.0.5:7233",
+				"TEMPORAL_ADDRESS":   "${HOSTPORT}",
 				"TEMPORAL_NAMESPACE": "default",
-			},
-			AddressAttrs: map[string]spec.AddrAttr{
-				"TEMPORAL_ADDRESS": spec.AttrHostPort,
 			},
 		},
 	}
 
 	ep := f.Endpoint()
 
-	if got := ep.Attributes["TEMPORAL_ADDRESS"]; got != "127.0.0.1:7233" {
-		t.Errorf("TEMPORAL_ADDRESS = %v, want 127.0.0.1:7233", got)
+	// Template should be passed through unchanged.
+	if got := ep.Attributes["TEMPORAL_ADDRESS"]; got != "${HOSTPORT}" {
+		t.Errorf("TEMPORAL_ADDRESS = %v, want ${HOSTPORT}", got)
 	}
 	if got := ep.Attributes["TEMPORAL_NAMESPACE"]; got != "default" {
 		t.Errorf("TEMPORAL_NAMESPACE = %v, want default", got)
 	}
+
+	// Verify that resolving the template against the proxy endpoint
+	// produces the correct value.
+	resolved, err := spec.ResolveAttributes(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved["TEMPORAL_ADDRESS"]; got != "127.0.0.1:7233" {
+		t.Errorf("resolved TEMPORAL_ADDRESS = %v, want 127.0.0.1:7233", got)
+	}
 }
 
-func TestForwarderEndpoint_NoAddressAttrs(t *testing.T) {
+func TestForwarderEndpoint_NoAttributes(t *testing.T) {
 	f := &proxy.Forwarder{
 		ListenPort: 8080,
 		Target: spec.Endpoint{
@@ -99,7 +99,7 @@ func TestForwarderEndpoint_NoAddressAttrs(t *testing.T) {
 
 	ep := f.Endpoint()
 
-	// Without AddressAttrs, attributes are copied unchanged.
+	// Without templates, attributes are copied unchanged.
 	if got := ep.Attributes["FOO"]; got != "bar" {
 		t.Errorf("FOO = %v, want bar", got)
 	}
