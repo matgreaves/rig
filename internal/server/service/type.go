@@ -27,7 +27,7 @@ type StartParams struct {
 	Egresses    map[string]spec.Endpoint   // resolved egresses (from wiring)
 	Artifacts   map[string]artifact.Output // keyed by Artifact.Key (from artifact phase)
 	Env         map[string]string          // pre-built environment variables
-	Args        []string                   // pre-expanded command arguments
+	Args        []string                   // raw command arg templates (expand against Env or adjusted env)
 	TempDir     string
 	EnvDir      string
 	InstanceID  string // environment instance ID (used for container naming)

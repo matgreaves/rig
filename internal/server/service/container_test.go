@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -141,23 +142,6 @@ func TestExpandAll_Nil(t *testing.T) {
 	}
 }
 
-func TestReplaceHost(t *testing.T) {
-	result := replaceHost([]string{"http://127.0.0.1:8080", "plain"}, "host.docker.internal")
-
-	if result[0] != "http://host.docker.internal:8080" {
-		t.Errorf("got %q", result[0])
-	}
-	if result[1] != "plain" {
-		t.Errorf("got %q", result[1])
-	}
-}
-
-func TestReplaceHost_Nil(t *testing.T) {
-	if result := replaceHost(nil, "host.docker.internal"); result != nil {
-		t.Errorf("expected nil, got %v", result)
-	}
-}
-
 func TestBuildPortBindings_ContainerPort(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
 		"default": {Host: "127.0.0.1", Port: 54321},
@@ -216,5 +200,67 @@ func TestDockerHostIP(t *testing.T) {
 	ip := dockerHostIP()
 	if !strings.Contains(ip, "docker") {
 		t.Errorf("expected docker host IP, got %q", ip)
+	}
+}
+
+func TestAdjustTempDirsInWiring(t *testing.T) {
+	wiring := map[string]any{
+		"ingresses": map[string]any{},
+		"egresses":  map[string]any{},
+		"temp_dir":  "/tmp/rig/abc123/myservice",
+		"env_dir":   "/tmp/rig/abc123",
+	}
+	b, _ := json.Marshal(wiring)
+	env := map[string]string{
+		"RIG_WIRING": string(b),
+	}
+
+	adjustTempDirsInWiring(env)
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(env["RIG_WIRING"]), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	var tempDir, envDir string
+	json.Unmarshal(got["temp_dir"], &tempDir)
+	json.Unmarshal(got["env_dir"], &envDir)
+
+	if tempDir != containerTempPath {
+		t.Errorf("temp_dir = %q, want %q", tempDir, containerTempPath)
+	}
+	if envDir != containerEnvPath {
+		t.Errorf("env_dir = %q, want %q", envDir, containerEnvPath)
+	}
+}
+
+func TestAdjustTempDirsInWiring_NoWiring(t *testing.T) {
+	env := map[string]string{}
+	adjustTempDirsInWiring(env) // should not panic
+	if _, ok := env["RIG_WIRING"]; ok {
+		t.Error("RIG_WIRING should not be created when absent")
+	}
+}
+
+func TestAdjustTempDirsInWiring_PreservesOtherFields(t *testing.T) {
+	wiring := map[string]any{
+		"ingresses": map[string]any{
+			"default": map[string]any{"host": "0.0.0.0", "port": 8080},
+		},
+		"temp_dir": "/host/path/svc",
+		"env_dir":  "/host/path",
+	}
+	b, _ := json.Marshal(wiring)
+	env := map[string]string{
+		"RIG_WIRING": string(b),
+	}
+
+	adjustTempDirsInWiring(env)
+
+	var got map[string]json.RawMessage
+	json.Unmarshal([]byte(env["RIG_WIRING"]), &got)
+
+	if _, ok := got["ingresses"]; !ok {
+		t.Error("ingresses field was lost")
 	}
 }

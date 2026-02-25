@@ -42,7 +42,7 @@ func (Process) Runner(params StartParams) run.Runner {
 		Name:   params.ServiceName,
 		Path:   cfg.Command,
 		Dir:    cfg.Dir,
-		Args:   params.Args,
+		Args:   expandAll(params.Args, params.Env),
 		Env:    params.Env,
 		Stdout: params.Stdout,
 		Stderr: params.Stderr,

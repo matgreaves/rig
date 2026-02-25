@@ -303,7 +303,6 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 		}
 
 		env := BuildServiceEnv(sc.name, sc.ingresses, sc.egresses, sc.tempDir, sc.envDir)
-		args := ExpandTemplates(sc.spec.Args, env)
 
 		runner := sc.svcType.Runner(service.StartParams{
 			ServiceName: sc.name,
@@ -312,7 +311,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Egresses:    sc.egresses,
 			Artifacts:   sc.artifacts,
 			Env:         env,
-			Args:        args,
+			Args:        sc.spec.Args,
 			TempDir:     sc.tempDir,
 			EnvDir:      sc.envDir,
 			InstanceID:  sc.instanceID,

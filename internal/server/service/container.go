@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
 	"github.com/matgreaves/rig/internal/server/artifact"
@@ -19,6 +20,13 @@ import (
 	"github.com/matgreaves/rig/internal/spec"
 	"github.com/matgreaves/run"
 	"github.com/matgreaves/run/onexit"
+)
+
+const (
+	// containerTempPath is the fixed mount point for the service's temp dir inside a container.
+	containerTempPath = "/rig/temp"
+	// containerEnvPath is the fixed mount point for the environment dir inside a container.
+	containerEnvPath = "/rig/env"
 )
 
 // ContainerConfig is the type-specific config for "container" services.
@@ -184,6 +192,13 @@ func (Container) Runner(params StartParams) run.Runner {
 		adjustedIngresses := adjustIngressEndpoints(params.Ingresses, params.Spec.Ingresses)
 		adjustedEgresses := adjustEgressEndpoints(params.Egresses, hostIP)
 		adjustedEnv := params.BuildEnv(adjustedIngresses, adjustedEgresses)
+
+		// Replace host temp/env dir paths with the fixed container mount points.
+		// The host dirs are bind-mounted into the container below.
+		adjustedEnv["RIG_TEMP_DIR"] = containerTempPath
+		adjustedEnv["RIG_ENV_DIR"] = containerEnvPath
+		adjustTempDirsInWiring(adjustedEnv)
+
 		// Merge user-specified env vars (from container config) on top.
 		for k, v := range cfg.Env {
 			adjustedEnv[k] = v
@@ -201,11 +216,10 @@ func (Container) Runner(params StartParams) run.Runner {
 			ExposedPorts: exposedPorts,
 		}
 
-		// Resolve the container command. Cmd supports ${VAR} template
-		// expansion against the adjusted env. Args from the spec are
-		// also adjusted (127.0.0.1 → host.docker.internal).
+		// Expand command and arg templates against the container-adjusted env
+		// so that ${RIG_TEMP_DIR}, host addresses, etc. resolve correctly.
 		cmd := expandAll(cfg.Cmd, adjustedEnv)
-		args := replaceHost(params.Args, hostIP)
+		args := expandAll(params.Args, adjustedEnv)
 		switch {
 		case len(cmd) > 0 && len(args) > 0:
 			config.Cmd = append(cmd, args...)
@@ -217,6 +231,18 @@ func (Container) Runner(params StartParams) run.Runner {
 
 		hostConfig := &container.HostConfig{
 			PortBindings: portBindings,
+			Mounts: []mount.Mount{
+				{
+					Type:   mount.TypeBind,
+					Source: params.TempDir,
+					Target: containerTempPath,
+				},
+				{
+					Type:   mount.TypeBind,
+					Source: params.EnvDir,
+					Target: containerEnvPath,
+				},
+			},
 		}
 		// On Linux, ensure host.docker.internal resolves to the host.
 		if runtime.GOOS == "linux" {
@@ -405,16 +431,26 @@ func expand(s string, env map[string]string) string {
 	})
 }
 
-// replaceHost replaces 127.0.0.1 with the Docker host IP in each string.
-func replaceHost(args []string, hostIP string) []string {
-	if len(args) == 0 {
-		return nil
+// adjustTempDirsInWiring updates temp_dir and env_dir inside the RIG_WIRING
+// JSON value to use container mount paths instead of host paths.
+func adjustTempDirsInWiring(env map[string]string) {
+	raw, ok := env["RIG_WIRING"]
+	if !ok {
+		return
 	}
-	out := make([]string, len(args))
-	for i, a := range args {
-		out[i] = strings.ReplaceAll(a, "127.0.0.1", hostIP)
+	var wiring map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &wiring); err != nil {
+		return
 	}
-	return out
+	if b, err := json.Marshal(containerTempPath); err == nil {
+		wiring["temp_dir"] = b
+	}
+	if b, err := json.Marshal(containerEnvPath); err == nil {
+		wiring["env_dir"] = b
+	}
+	if b, err := json.Marshal(wiring); err == nil {
+		env["RIG_WIRING"] = string(b)
+	}
 }
 
 // buildPortBindings creates Docker port bindings from resolved ingresses.
