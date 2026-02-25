@@ -1,4 +1,4 @@
-.PHONY: build build-all test fmt clean clean-bin clean-logs clean-cache
+.PHONY: build build-all test fmt clean clean-bin clean-logs clean-cache clean-tmp
 
 PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 
@@ -24,8 +24,8 @@ test: build
 fmt:
 	gofmt -w .
 
-# Remove build artifacts, logs, and cache
-clean: clean-bin clean-logs clean-cache
+# Remove build artifacts, logs, cache, and temp dirs
+clean: clean-bin clean-logs clean-cache clean-tmp
 
 # Remove build artifacts
 clean-bin:
@@ -38,3 +38,7 @@ clean-logs:
 # Remove artifact cache (.rig/cache/)
 clean-cache:
 	rm -rf .rig/cache/
+
+# Remove preserved temp dirs (.rig/tmp/)
+clean-tmp:
+	rm -rf .rig/tmp/
