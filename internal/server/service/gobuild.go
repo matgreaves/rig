@@ -69,7 +69,7 @@ func (Go) Runner(params StartParams) run.Runner {
 	return run.Process{
 		Name:   params.ServiceName,
 		Path:   out.Path,
-		Args:   params.Args,
+		Args:   expandAll(params.Args, params.Env),
 		Env:    params.Env,
 		Stdout: params.Stdout,
 		Stderr: params.Stderr,
