@@ -15,7 +15,7 @@ type ReadySpec struct {
 	// Path is the HTTP GET path for HTTP checks. Default "/".
 	Path string `json:"path,omitempty"`
 
-	// Interval is the poll interval. Default 100ms with exponential backoff.
+	// Interval is the poll interval. Default 10ms with exponential backoff.
 	Interval Duration `json:"interval,omitempty"`
 
 	// Timeout is the maximum wait for the service to become ready.

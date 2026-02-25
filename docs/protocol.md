@@ -126,7 +126,7 @@ The JSON body sent to `POST /environments`.
       "type": "postgres",
       "config": {"image": "postgres:16"},
       "hooks": {
-        "init": [{"type": "initdb", "config": {"sql": "CREATE TABLE users (...)"}}]
+        "init": [{"type": "sql", "config": {"statements": ["CREATE TABLE users (...)"]}}]
       }
     },
     "api": {
@@ -154,16 +154,16 @@ The JSON body sent to `POST /environments`.
 |-------|------|----------|-------------|
 | `name` | string | Yes | Environment identifier (typically the test name) |
 | `services` | object | Yes | Map of service name to service spec. At least one required. |
-| `observe` | boolean | No | Enable transparent traffic proxying. Default `false` at protocol level; Go SDK defaults to `true`. |
+| `observe` | boolean | No | Enable transparent traffic proxying. Default `false`. |
 
 ### Service
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `temporal`, `client` |
+| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `temporal`, `client`, `custom` |
 | `config` | object | No | Type-specific configuration as raw JSON |
 | `args` | string[] | No | Command-line arguments. Supports `${VAR}` template expansion. |
-| `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, a single HTTP ingress named `"default"` is implied. |
+| `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, the service has no ingresses (valid for workers). SDK builders typically add a default HTTP ingress. |
 | `egresses` | object | No | Map of egress name to EgressSpec |
 | `hooks` | object | No | Lifecycle hooks (`prestart`, `init` arrays) |
 
@@ -172,7 +172,7 @@ The JSON body sent to `POST /environments`.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `protocol` | string | Yes | `"tcp"`, `"http"`, `"grpc"`, or `"kafka"` |
-| `container_port` | integer | No | Fixed port inside container. Required for container service types. |
+| `container_port` | integer | No | Fixed port inside container. If omitted, the host-allocated port is used as the container port (for rig-native apps that read the wiring env vars). |
 | `ready` | object | No | Health check override (see ReadySpec). Inferred from protocol if omitted. |
 | `attributes` | object | No | Static attributes published with the endpoint |
 
@@ -189,8 +189,8 @@ The JSON body sent to `POST /environments`.
 |-------|------|----------|-------------|
 | `type` | string | No | Health check type: `"tcp"`, `"http"`, `"grpc"`. Defaults to ingress protocol. |
 | `path` | string | No | HTTP GET path. Default `"/"`. |
-| `interval` | string | No | Poll interval as duration string (e.g. `"100ms"`). Default `"100ms"` with backoff. |
-| `timeout` | string | No | Max wait as duration string (e.g. `"30s"`). Default from startup timeout. |
+| `interval` | string | No | Initial poll interval as duration string (e.g. `"10ms"`). Default `"10ms"` with exponential backoff to a `1s` cap. |
+| `timeout` | string | No | Max wait as duration string (e.g. `"30s"`). Default `"30s"`. |
 
 Duration strings use Go's `time.ParseDuration` format: `"5s"`, `"100ms"`, `"1m30s"`, `"500us"`.
 
@@ -204,8 +204,8 @@ Duration strings use Go's `time.ParseDuration` format: `"5s"`, `"100ms"`, `"1m30
 
 Hook types:
 - `"client_func"` — callback to client-side function (works in prestart and init)
-- `"initdb"` — Postgres: run SQL via `docker exec` (config: `{"sql": "..."}` or `{"sql_dir": "path"}`)
-- `"create-namespace"` — Temporal: create namespace (config: `{"namespace": "..."}`)
+- `"sql"` — Postgres: run SQL statements via `psql` inside the container (config: `{"statements": ["CREATE TABLE ...", "INSERT ..."]}`)
+- `"exec"` — Container/Postgres: run a command inside the container via `docker exec` (config: `{"command": ["cmd", "arg1", "arg2"]}`)
 
 ### Hooks
 
@@ -218,12 +218,42 @@ Hook types:
 
 Each service type reads type-specific fields from `config`:
 
-**`go`**: `{"module": "./cmd/api", "goos": "linux", "goarch": "amd64"}`
-**`container`**: `{"image": "redis:7"}`
-**`process`**: `{"path": "/usr/local/bin/myservice"}`
+**`container`**: `{"image": "redis:7", "cmd": ["..."], "env": {"KEY": "val"}}`
+- `image` (required): Docker image reference
+- `cmd` (optional): override container command
+- `env` (optional): additional environment variables (merged with RIG_* wiring)
+- Container name: `rig-{instanceID}-{serviceName}`
+- Stop timeout: 10 seconds
+- Linux: adds `--add-host=host.docker.internal:host-gateway`
+- Supported hooks: `"exec"` (config: `{"command": ["cmd", "arg1"]}`)
+
+**`go`**: `{"module": "./cmd/api"}`
+- `module` (required): path to Go module directory
+- Artifact key: `gobuild:{module}`
+
+**`process`**: `{"command": "/usr/local/bin/myservice", "dir": "/opt/app"}`
+- `command` (required): path to the executable
+- `dir` (optional): working directory
+
 **`postgres`**: `{"image": "postgres:16"}`
-**`temporal`**: `{"version": "1.5.1"}`
-**`client`**: no config (lifecycle managed entirely via callbacks)
+- `image` (optional): Docker image. Default `postgres:16-alpine`.
+- Default user: `postgres`, password: `postgres`
+- Default database: service name
+- Default ingress: single TCP on port 5432
+- Health check: `pg_isready` via `docker exec` (not TCP dial)
+- Container env: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- Supported hooks: `"sql"` (config: `{"statements": [...]}`), `"exec"` (config: `{"command": [...]}`)
+
+**`temporal`**: `{"version": "1.5.1", "namespace": "default"}`
+- `version` (optional): Temporal CLI version. Default `1.5.1`.
+- `namespace` (optional): default namespace. Default `"default"`.
+- Default ingresses: `"default"` (gRPC) + `"ui"` (HTTP)
+- CLI download URL: `https://github.com/temporalio/cli/releases/download/v{version}/temporal_cli_{version}_{os}_{arch}.tar.gz`
+- Runs: `temporal server start-dev --ip 127.0.0.1 --port {port} --namespace {ns} --log-format json [--ui-port {uiPort} | --headless]`
+
+**`client`**: config: `{"start_handler": "handler_name"}`. Server allocates ports and runs health checks normally; only the `start` step is delegated to a client-side function via callback.
+
+**`custom`**: pass-through type for server plugins not built into rigd. Validated but not registered by default; the host application must register a handler via `Registry.Register`.
 
 ---
 
@@ -614,47 +644,4 @@ This allows multiple SDK versions to run their own `rigd` instances simultaneous
 
 The `--idle 5m` flag makes `rigd` exit after 5 minutes of inactivity. Multiple test processes share the same server instance; the idle timer resets on each API call.
 
----
-
-## Go SDK Defaults
-
-Behaviors the Go SDK applies that other SDKs should replicate:
-
-| Behavior | Go SDK default | Protocol default |
-|----------|---------------|-----------------|
-| Traffic proxying (`observe`) | `true` | `false` |
-| Startup timeout | 2 minutes | No timeout |
-| Server auto-start | Yes, via `EnsureServer()` | N/A |
-| Cleanup on teardown | `DELETE` with `?log=true` | N/A |
-
-### Server auto-start
-
-The Go SDK auto-starts `rigd` if no server is running:
-
-1. Check `RIG_SERVER_ADDR` env var — if set, use that server directly
-2. Otherwise, follow the [server startup protocol](#server-startup-protocol) described above
-
-### SSE stream handling
-
-The Go SDK:
-
-1. Connects to `GET /environments/{id}/events`
-2. For each event:
-   - `callback.request` → dispatch to registered handler, post response
-   - `environment.up` → extract `ingresses` map, return `Environment` to caller
-   - `environment.down` → return error with `message` as the error text
-   - `environment.failing` → cache error for timeout message
-   - `progress.stall` → cache `message` for timeout display
-3. Blocks until `environment.up` or `environment.down`
-4. On startup timeout: fail with the most recent `progress.stall` message if available
-
-### Cleanup
-
-On test cleanup:
-
-1. Cancel any running client-side functions
-2. `DELETE /environments/{id}?log=true&reason={outcome}`
-   - `reason=test_failed` if the test failed
-   - `reason=test_passed` if the test passed
-3. Block until DELETE response
-4. Log event log file paths for debugging
+See [SDK Reference](sdk.md) for SDK defaults and behavior.
