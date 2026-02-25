@@ -534,6 +534,88 @@ Service `args` support `${VAR}` expansion against the full env var map:
 
 ---
 
+## Directory Structure & Server Management
+
+### Rig directory
+
+All rig state lives under a single base directory. The default is `~/.rig`. Override with the `RIG_DIR` environment variable. If `$HOME` is unavailable, falls back to `$TMPDIR/rig`.
+
+```
+~/.rig/                          # base directory (or $RIG_DIR)
+├── bin/
+│   └── v0.2.0/
+│       └── rigd                 # downloaded binary for this version
+├── cache/                       # artifact cache (Docker images, Go builds, downloads)
+├── logs/                        # JSONL event logs and pretty-printed logs per test
+│   ├── TestMyApp-a1b2c3.jsonl
+│   └── TestMyApp-a1b2c3.log
+├── tmp/                         # per-environment temp dirs (cleaned on teardown)
+│   └── a1b2c3d4e5f6/           # environment instance ID
+│       ├── api/                 # per-service temp dir
+│       └── db/
+├── rigd.addr                    # server address (unversioned, used with RIG_BINARY)
+├── rigd-v0.2.0.addr             # server address (versioned, used with managed binaries)
+├── rigd.lock                    # startup lock (unversioned)
+├── rigd-v0.2.0.lock             # startup lock (versioned)
+└── rigd.log                     # server stderr log
+```
+
+### Binary resolution
+
+SDKs embed a version string (e.g. `"0.2.0"`) identifying the `rigd` release they target. The binary search order is:
+
+1. **`RIG_BINARY` env var** — explicit path to a `rigd` binary. Used for development and CI where `make build` produces the binary. If set but the file doesn't exist, fail immediately.
+2. **`{rigDir}/bin/v{version}/rigd`** — versioned managed path. This is where auto-download places binaries.
+3. **`{rigDir}/bin/rigd`** — legacy unversioned path (backwards compatibility).
+4. **`rigd` in `$PATH`** — system-installed binary.
+5. **Auto-download** — download from GitHub Releases, extract, and place at `{rigDir}/bin/v{version}/rigd`.
+
+### Auto-download
+
+When no binary is found, download from:
+
+```
+https://github.com/matgreaves/rig/releases/download/rigd/v{version}/rigd-{os}-{arch}.tar.gz
+```
+
+Where `{os}` is `linux` or `darwin` and `{arch}` is `amd64` or `arm64`.
+
+The archive contains a single `rigd` binary. Extract it to `{rigDir}/bin/v{version}/rigd`. Use a temp file + rename for atomicity so concurrent processes don't read a partial binary.
+
+### Versioned vs unversioned files
+
+When `RIG_BINARY` is set (explicit override), use **unversioned** file names:
+- `{rigDir}/rigd.addr`
+- `{rigDir}/rigd.lock`
+
+When using a managed binary (any other resolution path), use **versioned** file names:
+- `{rigDir}/rigd-v{version}.addr`
+- `{rigDir}/rigd-v{version}.lock`
+
+This allows multiple SDK versions to run their own `rigd` instances simultaneously without conflicting.
+
+### Server startup protocol
+
+1. **Fast path**: read the addr file. If it exists and `GET /health` returns `200`, the server is already running. Return `http://{addr}`.
+
+2. **Acquire lock**: create the lock file and acquire an exclusive `flock`. This prevents concurrent test processes from starting multiple servers.
+
+3. **Double-check**: after acquiring the lock, re-read the addr file and probe health. Another process may have started the server while we waited for the lock.
+
+4. **Start server**: launch `rigd` as a detached process (new session via `setsid`):
+   ```
+   rigd --idle 5m --rig-dir {rigDir} [--addr-file {addrFile}]
+   ```
+   Pass `--addr-file` only when using versioned file names. Redirect stderr to `{rigDir}/rigd.log` (append mode).
+
+5. **Wait for addr file**: poll every 100ms for up to 10 seconds. Once the file appears and contains a non-empty address, probe `GET /health`. Return `http://{addr}` on success.
+
+6. **Release lock**: unlock and remove the lock file.
+
+The `--idle 5m` flag makes `rigd` exit after 5 minutes of inactivity. Multiple test processes share the same server instance; the idle timer resets on each API call.
+
+---
+
 ## Go SDK Defaults
 
 Behaviors the Go SDK applies that other SDKs should replicate:
@@ -549,11 +631,8 @@ Behaviors the Go SDK applies that other SDKs should replicate:
 
 The Go SDK auto-starts `rigd` if no server is running:
 
-1. Check `RIG_SERVER_ADDR` env var — if set, use that server
-2. Otherwise, call `EnsureServer()`:
-   - Look for binary: `RIG_BINARY` env var → `~/.rig/bin/v{version}/rigd` → `rigd` in PATH → auto-download from GitHub Releases
-   - Check addr file (`~/.rig/rigd.addr` or `~/.rig/rigd-v{version}.addr`) — if server already running, verify with `GET /health`
-   - If not running: start `rigd --idle 5m --rig-dir ~/.rig`, wait for addr file (10s), verify health
+1. Check `RIG_SERVER_ADDR` env var — if set, use that server directly
+2. Otherwise, follow the [server startup protocol](#server-startup-protocol) described above
 
 ### SSE stream handling
 
