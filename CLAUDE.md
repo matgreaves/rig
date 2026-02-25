@@ -35,7 +35,8 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples
 - `connect/httpx/` — HTTP client/server helpers built on rig endpoints
 - `connect/temporalx/` — Temporal client helper (sub-module)
 - `connect/pgx/` — Postgres client helper (sub-module)
-- `examples/orderflow/` — example order processing app (Postgres + Temporal + HTTP)
+- `examples/echo/` — minimal example: single Go HTTP service + test
+- `examples/orderflow/` — full example: Postgres + Temporal + HTTP API
 - `internal/spec/` — shared spec types and validation
 - `internal/server/` — rigd server: orchestrator, lifecycle, health checks, artifact cache, proxy
 - `internal/cmd/rigd/` — rigd CLI entrypoint
