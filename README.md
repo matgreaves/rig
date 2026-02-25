@@ -258,6 +258,66 @@ rig.Up(t, services,
 )
 ```
 
+## Traffic observability
+
+By default, rig inserts a transparent proxy on every service edge. All HTTP requests, gRPC calls, and TCP connections between services are captured in the event log — method, path, status, latency, headers, and bodies (up to 64KB).
+
+You don't need to instrument anything. Because rig controls the wiring between services, it can observe traffic without agents, sidecars, or code changes.
+
+Disable with `rig.WithoutObserve()` if you don't need it.
+
+## Assertions in the event log
+
+`env.T` is a wrapped `testing.TB` that captures assertion failures (`Fatal`, `Error`, etc.) as events in the rig event log. Pass it to assertion libraries so failures appear inline with service output:
+
+```go
+resp, err := api.Get("/users")
+if err != nil {
+    env.T.Fatal(err)  // captured in event log with file:line
+}
+```
+
+This makes test failures easier to debug — you see exactly which assertion failed relative to what the services were doing at the time.
+
+## Debugging test failures
+
+Each test that calls `rig.Up` produces a `.jsonl` event log in `~/.rig/logs/`. The `rig` CLI inspects these logs.
+
+Install:
+
+```bash
+go install github.com/matgreaves/rig/cmd/rig@latest
+```
+
+Find and inspect logs by test name (not full path — tests run in parallel so "most recent" is meaningless):
+
+```bash
+rig ls --failed                              # what failed?
+rig traffic OrderFlow                        # HTTP/gRPC/TCP traffic
+rig traffic OrderFlow --detail 3             # expand request #3
+rig traffic OrderFlow --slow 100ms           # only slow requests
+rig traffic OrderFlow --status 5xx           # only server errors
+rig traffic OrderFlow --edge "api→db"        # filter by service edge
+rig logs OrderFlow                           # interleaved service output
+rig logs OrderFlow --service api             # single service
+rig logs OrderFlow --grep "connection refused"
+```
+
+Compose for scripting — `rig ls -q` outputs file paths for piping:
+
+```bash
+rig traffic $(rig ls --failed -q -n1)        # most recent failure
+```
+
+## Configuration
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `RIG_DIR` | Base directory for rigd state (addr file, logs, cache, binaries) | `~/.rig` |
+| `RIG_BINARY` | Path to rigd binary (skips auto-download; useful in CI) | Auto-download from GitHub Releases |
+| `RIG_PRESERVE` | Set to `true` to keep environment temp directories after teardown | Unset (cleanup) |
+| `RIG_PRESERVE_ON_FAILURE` | Set to `true` to keep temp directories only when tests fail | Unset (cleanup) |
+
 ## Modules
 
 | Module | Import path | Purpose |
@@ -268,6 +328,10 @@ rig.Up(t, services,
 | `connect/temporalx` | `github.com/matgreaves/rig/connect/temporalx` | Temporal client helper |
 
 Server internals live in `internal/` and cannot be imported.
+
+## Building SDKs in other languages
+
+The [wire protocol reference](docs/protocol.md) documents the rigd HTTP API, JSON spec format, SSE event stream, callback protocol, and wiring conventions. Use it to build client SDKs in Python, TypeScript, Rust, or any language that can make HTTP requests and read SSE streams.
 
 ## Agentic coding
 

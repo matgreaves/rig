@@ -120,6 +120,21 @@ rig.Up(t, services,
 )
 ```
 
+## Traffic observability
+
+By default, rig proxies every service edge and captures all HTTP requests, gRPC calls, and TCP connections in the event log (method, path, status, latency, headers, bodies up to 64KB). No instrumentation needed — rig controls the wiring. Disable with `rig.WithoutObserve()`.
+
+`env.T` wraps `testing.TB` — assertion failures (`Fatal`, `Error`, etc.) are captured as `test.note` events with file:line info, interleaved with service output in the event log.
+
+## Configuration
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `RIG_DIR` | Base directory for rigd state | `~/.rig` |
+| `RIG_BINARY` | Path to rigd binary (skips auto-download) | Auto-download |
+| `RIG_PRESERVE` | Keep temp directories after teardown | Unset |
+| `RIG_PRESERVE_ON_FAILURE` | Keep temp directories only on test failure | Unset |
+
 ## Debugging test failures
 
 Each test that calls `rig.Up` produces a `.jsonl` log in `{RIG_DIR}/logs/`. Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`.
@@ -191,4 +206,6 @@ Five Go modules: root `go.mod`, `internal/go.mod`, `connect/temporalx/go.mod`, `
 - `connect/httpx/client.go` — `httpx.New`, HTTP client helpers
 - `connect/httpx/server.go` — `httpx.ListenAndServe` for services
 - `internal/server/` — rigd server (not importable by consumers)
+- `docs/protocol.md` — rigd wire protocol reference (for building non-Go SDKs)
+- `examples/echo/` — minimal example: single Go HTTP service + test
 - `examples/orderflow/` — full example: Postgres + Temporal + HTTP API
