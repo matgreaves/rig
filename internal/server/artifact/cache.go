@@ -23,6 +23,9 @@ func NewCache(dir string) *Cache {
 	return &Cache{dir: dir}
 }
 
+// Dir returns the cache root directory.
+func (c *Cache) Dir() string { return c.dir }
+
 // OutputDir returns the directory where a resolver should place its output for
 // cacheKey. The directory is created if it does not exist.
 func (c *Cache) OutputDir(cacheKey string) string {
@@ -35,10 +38,10 @@ func (c *Cache) OutputDir(cacheKey string) string {
 // resolution work across concurrent rigd instances. Returns an unlock function
 // that must be called when the critical section is done.
 func (c *Cache) Lock(cacheKey string) (unlock func(), err error) {
-	if err := os.MkdirAll(c.dir, 0o755); err != nil {
+	lockPath := filepath.Join(c.dir, cacheKey+".lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
-	lockPath := filepath.Join(c.dir, cacheKey+".lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)

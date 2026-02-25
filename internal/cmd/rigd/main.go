@@ -80,6 +80,10 @@ func main() {
 
 	httpSrv := &http.Server{Handler: s}
 
+	// Start background tasks (e.g. Docker image cache refresh).
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go s.StartBackgroundTasks(bgCtx)
+
 	// Serve in background.
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()
@@ -97,6 +101,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rigd: serve error: %v\n", err)
 		os.Exit(1)
 	}
+
+	bgCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

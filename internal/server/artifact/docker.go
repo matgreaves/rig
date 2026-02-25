@@ -79,9 +79,13 @@ func (d DockerPull) Resolve(ctx context.Context, outputDir string) (Output, erro
 
 	imageID := inspect.ID
 
-	// Write breadcrumb so Cached finds it next time.
+	// Write breadcrumbs so Cached finds the image next time, and the background
+	// refresher knows the original tag for re-pulling.
 	if err := os.WriteFile(filepath.Join(outputDir, ".image-id"), []byte(imageID), 0o644); err != nil {
 		return Output{}, fmt.Errorf("write breadcrumb: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, ".image-ref"), []byte(d.Image), 0o644); err != nil {
+		return Output{}, fmt.Errorf("write image-ref breadcrumb: %w", err)
 	}
 
 	return Output{

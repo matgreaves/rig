@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/service"
 	"github.com/matgreaves/rig/internal/spec"
 )
@@ -29,7 +30,9 @@ type Server struct {
 	mu   sync.Mutex
 	envs map[string]*envInstance
 
-	idle *IdleTimer
+	idle      *IdleTimer
+	cache     *artifact.Cache
+	refresher *artifact.Refresher
 }
 
 // envInstance holds the runtime state of a single active environment.
@@ -58,14 +61,17 @@ func NewServer(
 	if rigDir == "" {
 		rigDir = DefaultRigDir()
 	}
+	cache := artifact.NewCache(filepath.Join(rigDir, "cache"))
 	s := &Server{
-		mux:      http.NewServeMux(),
-		ports:    ports,
-		registry: registry,
-		tempBase: tempBase,
-		rigDir:   rigDir,
-		envs:     make(map[string]*envInstance),
-		idle:     NewIdleTimer(idleTimeout),
+		mux:       http.NewServeMux(),
+		ports:     ports,
+		registry:  registry,
+		tempBase:  tempBase,
+		rigDir:    rigDir,
+		envs:      make(map[string]*envInstance),
+		idle:      NewIdleTimer(idleTimeout),
+		cache:     cache,
+		refresher: artifact.NewRefresher(cache, artifact.DefaultStaleAfter),
 	}
 
 	s.mux.HandleFunc("GET /health", s.handleHealth)
@@ -92,6 +98,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // ShutdownCh returns a channel that is closed when the idle timer fires.
 func (s *Server) ShutdownCh() <-chan struct{} {
 	return s.idle.ShutdownCh()
+}
+
+// idleCheckInterval is how often the background loop checks whether the server
+// is idle and runs maintenance tasks.
+const idleCheckInterval = 30 * time.Second
+
+// StartBackgroundTasks runs a polling loop that checks for server idleness
+// every 30 seconds and triggers maintenance tasks (e.g. Docker image cache
+// refresh) when no environments are active. Blocks until ctx is cancelled;
+// call it in its own goroutine.
+func (s *Server) StartBackgroundTasks(ctx context.Context) {
+	ticker := time.NewTicker(idleCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !s.isIdle() {
+				continue
+			}
+			s.refresher.RefreshOnce(ctx)
+		}
+	}
+}
+
+// isIdle returns true when there are no active environments.
+func (s *Server) isIdle() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.envs) == 0
 }
 
 // handleCreateEnvironment handles POST /environments.
@@ -126,7 +164,7 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 		Registry: s.registry,
 		Log:      envLog,
 		TempBase: s.tempBase,
-		CacheDir: filepath.Join(s.rigDir, "cache"),
+		Cache:    s.cache,
 		Preserve: &preserve,
 	}
 
