@@ -22,9 +22,9 @@ type Orchestrator struct {
 	Ports    *PortAllocator
 	Registry *service.Registry
 	Log      *EventLog
-	TempBase string // base directory for temp dirs (default os.TempDir()/rig)
-	CacheDir string // artifact cache directory (default ~/.rig/cache/)
-	Preserve *bool  // when non-nil and true, skip temp dir cleanup on exit
+	TempBase string          // base directory for temp dirs (default os.TempDir()/rig)
+	Cache    *artifact.Cache // artifact cache (shared with background refresher)
+	Preserve *bool           // when non-nil and true, skip temp dir cleanup on exit
 }
 
 // Orchestrate builds a run.Runner that manages the full lifecycle of the
@@ -77,7 +77,10 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 	// Safe because the two phases run sequentially.
 	results := make(map[string]artifact.Output)
 
-	cache := artifact.NewCache(o.cacheDir())
+	cache := o.Cache
+	if cache == nil {
+		cache = artifact.NewCache(filepath.Join(DefaultRigDir(), "cache"))
+	}
 
 	emit := func(kind artifact.EventKind, key string, err error) {
 		evt := Event{
@@ -225,13 +228,6 @@ func (o *Orchestrator) tempBase() string {
 		return o.TempBase
 	}
 	return filepath.Join(os.TempDir(), "rig")
-}
-
-func (o *Orchestrator) cacheDir() string {
-	if o.CacheDir != "" {
-		return o.CacheDir
-	}
-	return filepath.Join(DefaultRigDir(), "cache")
 }
 
 // DefaultRigDir returns the base rig directory. It checks RIG_DIR first,
