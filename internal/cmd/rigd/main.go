@@ -38,7 +38,7 @@ func main() {
 	s := server.NewServer(
 		server.NewPortAllocator(),
 		reg,
-		"", // tempBase — use OS default
+		filepath.Join(*rigDir, "tmp"),
 		*idle,
 		*rigDir,
 	)
