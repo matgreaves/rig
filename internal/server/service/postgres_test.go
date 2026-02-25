@@ -29,17 +29,30 @@ func TestPostgresPublish_InjectsAttributes(t *testing.T) {
 			t.Errorf("missing attribute %s", attr)
 		}
 	}
-	if ep.Attributes["PGHOST"] != "127.0.0.1" {
-		t.Errorf("PGHOST = %v, want 127.0.0.1", ep.Attributes["PGHOST"])
+	// PGHOST and PGPORT are stored as templates.
+	if ep.Attributes["PGHOST"] != "${HOST}" {
+		t.Errorf("PGHOST = %v, want ${HOST}", ep.Attributes["PGHOST"])
 	}
-	if ep.Attributes["PGPORT"] != "54321" {
-		t.Errorf("PGPORT = %v, want 54321", ep.Attributes["PGPORT"])
+	if ep.Attributes["PGPORT"] != "${PORT}" {
+		t.Errorf("PGPORT = %v, want ${PORT}", ep.Attributes["PGPORT"])
 	}
 	if ep.Attributes["PGUSER"] != "postgres" {
 		t.Errorf("PGUSER = %v, want postgres", ep.Attributes["PGUSER"])
 	}
 	if ep.Attributes["PGPASSWORD"] != "postgres" {
 		t.Errorf("PGPASSWORD = %v, want postgres", ep.Attributes["PGPASSWORD"])
+	}
+
+	// Templates should resolve correctly against the endpoint.
+	resolved, err := spec.ResolveAttributes(ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved["PGHOST"] != "127.0.0.1" {
+		t.Errorf("resolved PGHOST = %v, want 127.0.0.1", resolved["PGHOST"])
+	}
+	if resolved["PGPORT"] != "54321" {
+		t.Errorf("resolved PGPORT = %v, want 54321", resolved["PGPORT"])
 	}
 }
 

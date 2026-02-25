@@ -8,30 +8,33 @@ import (
 )
 
 func TestBuildServiceEnv_ServiceLevel(t *testing.T) {
-	env := server.BuildServiceEnv("my-api", nil, nil, "/tmp/rig/abc/my-api", "/tmp/rig/abc")
+	env, _ := server.BuildServiceEnv("my-api", nil, nil, "/tmp/rig/abc/my-api", "/tmp/rig/abc")
 	assertEnvVar(t, env, "RIG_TEMP_DIR", "/tmp/rig/abc/my-api")
 	assertEnvVar(t, env, "RIG_ENV_DIR", "/tmp/rig/abc")
 	assertEnvVar(t, env, "RIG_SERVICE", "my-api")
 }
 
 func TestBuildServiceEnv_DefaultIngressUnprefixed(t *testing.T) {
+	// BuildServiceEnv resolves attribute templates against the endpoint's
+	// Host/Port at the output boundary.
 	ingresses := map[string]spec.Endpoint{
 		"default": {
 			Host:     "127.0.0.1",
-			Port:     8080,
-			Protocol: spec.HTTP,
+			Port:     5432,
+			Protocol: spec.TCP,
 			Attributes: map[string]any{
-				"PGHOST": "127.0.0.1",
-				"PGPORT": "5432",
+				"PGHOST": "${HOST}",
+				"PGPORT": "${PORT}",
 			},
 		},
 	}
 
-	env := server.BuildServiceEnv("db", ingresses, nil, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("db", ingresses, nil, "/tmp", "/tmp")
 
 	// Default ingress HOST/PORT are unprefixed.
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
-	assertEnvVar(t, env, "PORT", "8080")
+	assertEnvVar(t, env, "PORT", "5432")
+	// Templates resolved against endpoint's Host/Port.
 	assertEnvVar(t, env, "PGHOST", "127.0.0.1")
 	assertEnvVar(t, env, "PGPORT", "5432")
 }
@@ -42,7 +45,7 @@ func TestBuildServiceEnv_NamedIngressPrefixed(t *testing.T) {
 		"admin":   {Host: "127.0.0.1", Port: 9090, Protocol: spec.HTTP},
 	}
 
-	env := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
 
 	// Default ingress is unprefixed.
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
@@ -60,14 +63,14 @@ func TestBuildServiceEnv_EgressAlwaysPrefixed(t *testing.T) {
 			Port:     54321,
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
-				"PGHOST":     "127.0.0.1",
-				"PGPORT":     "54321",
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
 				"PGDATABASE": "orders",
 			},
 		},
 	}
 
-	env := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
 
 	assertEnvVar(t, env, "DATABASE_HOST", "127.0.0.1")
 	assertEnvVar(t, env, "DATABASE_PORT", "54321")
@@ -92,7 +95,7 @@ func TestBuildServiceEnv_MultipleEgresses(t *testing.T) {
 		},
 	}
 
-	env := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
 
 	assertEnvVar(t, env, "ORDERS_DB_PGDATABASE", "orders")
 	assertEnvVar(t, env, "USERS_DB_PGDATABASE", "users")
@@ -105,7 +108,7 @@ func TestBuildServiceEnv_HyphenatedEgressName(t *testing.T) {
 		"order-db": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP},
 	}
 
-	env := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
 
 	assertEnvVar(t, env, "ORDER_DB_HOST", "127.0.0.1")
 	assertEnvVar(t, env, "ORDER_DB_PORT", "5432")
@@ -118,7 +121,7 @@ func TestBuildServiceEnv_NoDefaultIngress(t *testing.T) {
 		"http": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
 	}
 
-	env := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
+	env, _ := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
 
 	assertEnvVar(t, env, "GRPC_HOST", "127.0.0.1")
 	assertEnvVar(t, env, "GRPC_PORT", "9090")
@@ -141,14 +144,14 @@ func TestBuildInitHookEnv_NoEgresses(t *testing.T) {
 			Port:     5432,
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
-				"PGHOST":     "127.0.0.1",
-				"PGPORT":     "5432",
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
 				"PGDATABASE": "testdb",
 			},
 		},
 	}
 
-	env := server.BuildInitHookEnv("postgres", ingresses, "/tmp/pg", "/tmp")
+	env, _ := server.BuildInitHookEnv("postgres", ingresses, "/tmp/pg", "/tmp")
 
 	// Ingress attributes are present and unprefixed (default ingress).
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
@@ -171,11 +174,11 @@ func TestBuildInitHookEnv_NoEgresses(t *testing.T) {
 func TestBuildInitHookEnv_MultipleIngresses(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
 		"default": {Host: "127.0.0.1", Port: 7233, Protocol: spec.GRPC,
-			Attributes: map[string]any{"TEMPORAL_ADDRESS": "127.0.0.1:7233"}},
+			Attributes: map[string]any{"TEMPORAL_ADDRESS": "${HOSTPORT}"}},
 		"ui": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
 	}
 
-	env := server.BuildInitHookEnv("temporal", ingresses, "/tmp", "/tmp")
+	env, _ := server.BuildInitHookEnv("temporal", ingresses, "/tmp", "/tmp")
 
 	// Default ingress unprefixed.
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
@@ -193,10 +196,10 @@ func TestBuildPrestartHookEnv_HasEgresses(t *testing.T) {
 	}
 	egresses := map[string]spec.Endpoint{
 		"database": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP,
-			Attributes: map[string]any{"PGDATABASE": "orders"}},
+			Attributes: map[string]any{"PGHOST": "${HOST}", "PGDATABASE": "orders"}},
 	}
 
-	env := server.BuildPrestartHookEnv("order-service", ingresses, egresses, "/tmp/os", "/tmp")
+	env, _ := server.BuildPrestartHookEnv("order-service", ingresses, egresses, "/tmp/os", "/tmp")
 
 	// Has ingress.
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
@@ -263,6 +266,30 @@ func TestExpandTemplate_Single(t *testing.T) {
 	if got != "/tmp/test/output.json" {
 		t.Errorf("got %q", got)
 	}
+}
+
+func TestBuildServiceEnv_ResolvesTemplates(t *testing.T) {
+	// BuildServiceEnv resolves templates at the output boundary.
+	ingresses := map[string]spec.Endpoint{
+		"default": {
+			Host:     "127.0.0.1",
+			Port:     5432,
+			Protocol: spec.TCP,
+			Attributes: map[string]any{
+				"PGHOST":     "${HOST}",
+				"PGPORT":     "${PORT}",
+				"PGDATABASE": "orders",
+				"ADDR":       "${HOSTPORT}",
+			},
+		},
+	}
+
+	env, _ := server.BuildServiceEnv("db", ingresses, nil, "/tmp", "/tmp")
+
+	assertEnvVar(t, env, "PGHOST", "127.0.0.1")
+	assertEnvVar(t, env, "PGPORT", "5432")
+	assertEnvVar(t, env, "PGDATABASE", "orders")
+	assertEnvVar(t, env, "ADDR", "127.0.0.1:5432")
 }
 
 func assertEnvVar(t *testing.T, env map[string]string, key, want string) {

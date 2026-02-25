@@ -24,13 +24,26 @@ func BuildServiceEnv(
 	egresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
-) map[string]string {
+) (map[string]string, error) {
+	// Resolve attribute templates against each endpoint's Host/Port.
+	// This is the output boundary — callers pass endpoints with templates
+	// (possibly adjusted for their execution context, e.g. container networking)
+	// and we produce concrete values.
+	resolvedIngresses, err := resolveEndpointMap(ingresses)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ingress attributes: %w", err)
+	}
+	resolvedEgresses, err := resolveEndpointMap(egresses)
+	if err != nil {
+		return nil, fmt.Errorf("resolve egress attributes: %w", err)
+	}
+
 	env := make(map[string]string)
 
 	// RIG_WIRING: structured wiring as JSON. Preferred over flat env vars.
 	wiring := WiringContext{
-		Ingresses: ingresses,
-		Egresses:  egresses,
+		Ingresses: resolvedIngresses,
+		Egresses:  resolvedEgresses,
 		TempDir:   tempDir,
 		EnvDir:    envDir,
 	}
@@ -44,12 +57,12 @@ func BuildServiceEnv(
 	env["RIG_SERVICE"] = serviceName
 
 	// Ingress attributes: default ingress is unprefixed, named ingresses are prefixed.
-	addIngressAttrs(env, ingresses)
+	addIngressAttrs(env, resolvedIngresses)
 
 	// Egress attributes: always prefixed by egress name.
-	addEgressAttrs(env, egresses)
+	addEgressAttrs(env, resolvedEgresses)
 
-	return env
+	return env, nil
 }
 
 // BuildInitHookEnv builds the environment variable map for an init hook.
@@ -60,7 +73,13 @@ func BuildInitHookEnv(
 	ingresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
-) map[string]string {
+) (map[string]string, error) {
+	// Resolve attribute templates at this output boundary.
+	resolvedIngresses, err := resolveEndpointMap(ingresses)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ingress attributes: %w", err)
+	}
+
 	env := make(map[string]string)
 
 	// Service-level attributes.
@@ -69,9 +88,9 @@ func BuildInitHookEnv(
 	env["RIG_SERVICE"] = serviceName
 
 	// Ingress attributes only — no egresses.
-	addIngressAttrs(env, ingresses)
+	addIngressAttrs(env, resolvedIngresses)
 
-	return env
+	return env, nil
 }
 
 // BuildPrestartHookEnv builds the environment variable map for a prestart hook.
@@ -82,7 +101,7 @@ func BuildPrestartHookEnv(
 	egresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
-) map[string]string {
+) (map[string]string, error) {
 	// Prestart hooks have the same env as the service itself.
 	return BuildServiceEnv(serviceName, ingresses, egresses, tempDir, envDir)
 }
@@ -90,7 +109,7 @@ func BuildPrestartHookEnv(
 // addIngressAttrs adds ingress attributes to the env map.
 // If a "default" ingress exists, its attributes are unprefixed.
 // All other ingresses have their attributes prefixed by the ingress name.
-func addIngressAttrs(env map[string]string, ingresses map[string]spec.Endpoint) {
+func addIngressAttrs(env map[string]string, ingresses map[string]spec.ResolvedEndpoint) {
 	for name, ep := range ingresses {
 		prefix := ""
 		if name != "default" {
@@ -102,7 +121,7 @@ func addIngressAttrs(env map[string]string, ingresses map[string]spec.Endpoint) 
 
 // addEgressAttrs adds egress attributes to the env map.
 // Egresses are always prefixed by the egress name.
-func addEgressAttrs(env map[string]string, egresses map[string]spec.Endpoint) {
+func addEgressAttrs(env map[string]string, egresses map[string]spec.ResolvedEndpoint) {
 	for name, ep := range egresses {
 		prefix := toEnvPrefix(name)
 		addEndpointAttrs(env, prefix, ep)
@@ -111,8 +130,8 @@ func addEgressAttrs(env map[string]string, egresses map[string]spec.Endpoint) {
 
 // addEndpointAttrs adds HOST, PORT, and all endpoint attributes to the env
 // map with the given prefix. If prefix is empty, attributes are added without
-// a prefix.
-func addEndpointAttrs(env map[string]string, prefix string, ep spec.Endpoint) {
+// a prefix. Accepts ResolvedEndpoint to ensure templates have been expanded.
+func addEndpointAttrs(env map[string]string, prefix string, ep spec.ResolvedEndpoint) {
 	set := func(key, value string) {
 		if prefix != "" {
 			env[prefix+key] = value

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/matgreaves/rig/connect"
@@ -53,15 +52,11 @@ func (Postgres) Publish(_ context.Context, params PublishParams) (map[string]spe
 		if ep.Attributes == nil {
 			ep.Attributes = make(map[string]any)
 		}
-		connect.PGHost.Set(ep.Attributes, ep.Host)
-		connect.PGPort.Set(ep.Attributes, strconv.Itoa(ep.Port))
+		connect.PGHost.Set(ep.Attributes, "${HOST}")
+		connect.PGPort.Set(ep.Attributes, "${PORT}")
 		connect.PGDatabase.Set(ep.Attributes, params.ServiceName)
 		connect.PGUser.Set(ep.Attributes, postgresDefaultUser)
 		connect.PGPassword.Set(ep.Attributes, postgresDefaultPassword)
-		ep.AddressAttrs = map[string]spec.AddrAttr{
-			"PGHOST": spec.AttrHost,
-			"PGPORT": spec.AttrPort,
-		}
 		endpoints[name] = ep
 	}
 	return endpoints, nil

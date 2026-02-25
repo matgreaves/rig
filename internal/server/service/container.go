@@ -191,7 +191,10 @@ func (Container) Runner(params StartParams) run.Runner {
 		hostIP := dockerHostIP()
 		adjustedIngresses := adjustIngressEndpoints(params.Ingresses, params.Spec.Ingresses)
 		adjustedEgresses := adjustEgressEndpoints(params.Egresses, hostIP)
-		adjustedEnv := params.BuildEnv(adjustedIngresses, adjustedEgresses)
+		adjustedEnv, err := params.BuildEnv(adjustedIngresses, adjustedEgresses)
+		if err != nil {
+			return fmt.Errorf("build container env: %w", err)
+		}
 
 		// Replace host temp/env dir paths with the fixed container mount points.
 		// The host dirs are bind-mounted into the container below.
@@ -337,24 +340,16 @@ func dockerHostIP() string {
 //   - Host → 0.0.0.0 (must listen on all interfaces for Docker port forwarding)
 //   - Port → ContainerPort if set (the port inside the container)
 //
-// Attributes that carried the original host or port values are updated to
-// match the adjusted values so that env vars derived from attributes (e.g.
-// PGHOST, PGPORT) are correct inside the container.
+// Attributes are copied unchanged — they contain templates (e.g. "${HOST}")
+// that resolve correctly downstream via BuildEnv → addEndpointAttrs against
+// the adjusted Host/Port.
 func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string]spec.IngressSpec) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(ingresses))
 	for name, ep := range ingresses {
-		origHost := ep.Host
-		origPort := strconv.Itoa(ep.Port)
-
 		ep.Host = "0.0.0.0"
 		if is, ok := specs[name]; ok && is.ContainerPort != 0 {
 			ep.Port = is.ContainerPort
 		}
-
-		// Rewrite declared address-derived attrs first, then fall back
-		// to convention-based adjustAttrs for user-specified attributes.
-		ep.Attributes = spec.RewriteAddressAttrs(ep, ep.Host, ep.Port)
-		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, origPort, strconv.Itoa(ep.Port))
 		adjusted[name] = ep
 	}
 	return adjusted
@@ -362,45 +357,15 @@ func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string
 
 // adjustEgressEndpoints returns a copy of the egress endpoints with host
 // addresses replaced so containers can reach host services through Docker's
-// bridge network. Attributes that carried 127.0.0.1 are updated to match.
+// bridge network. Attributes are copied unchanged — templates resolve
+// correctly against the adjusted Host downstream.
 func adjustEgressEndpoints(egresses map[string]spec.Endpoint, hostIP string) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(egresses))
 	for name, ep := range egresses {
-		origHost := ep.Host
 		ep.Host = strings.ReplaceAll(ep.Host, "127.0.0.1", hostIP)
-		// Rewrite declared address-derived attrs first, then fall back
-		// to convention-based adjustAttrs for user-specified attributes.
-		ep.Attributes = spec.RewriteAddressAttrs(ep, ep.Host, ep.Port)
-		ep.Attributes = adjustAttrs(ep.Attributes, origHost, ep.Host, "", "")
 		adjusted[name] = ep
 	}
 	return adjusted
-}
-
-// adjustAttrs returns a copy of attrs with values matching oldHost or oldPort
-// replaced by newHost or newPort respectively. If oldPort is empty, port
-// replacement is skipped.
-func adjustAttrs(attrs map[string]any, oldHost, newHost, oldPort, newPort string) map[string]any {
-	if len(attrs) == 0 {
-		return attrs
-	}
-	out := make(map[string]any, len(attrs))
-	for k, v := range attrs {
-		s := fmt.Sprintf("%v", v)
-		switch s {
-		case oldHost:
-			out[k] = newHost
-		case oldPort:
-			if oldPort != "" {
-				out[k] = newPort
-			} else {
-				out[k] = v
-			}
-		default:
-			out[k] = v
-		}
-	}
-	return out
 }
 
 // envMapToSlice converts a map of env vars to a slice of "KEY=VALUE" strings.

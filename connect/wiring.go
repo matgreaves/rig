@@ -12,11 +12,10 @@ import (
 // Wiring provides resolved endpoint information to services and hook
 // functions. Use ParseWiring to read from the environment.
 type Wiring struct {
-	Ingresses  map[string]Endpoint `json:"ingresses,omitempty"`
-	Egresses   map[string]Endpoint `json:"egresses,omitempty"`
-	Attributes map[string]string   `json:"attributes,omitempty"`
-	TempDir    string              `json:"temp_dir,omitempty"`
-	EnvDir     string              `json:"env_dir,omitempty"`
+	Ingresses map[string]Endpoint `json:"ingresses,omitempty"`
+	Egresses  map[string]Endpoint `json:"egresses,omitempty"`
+	TempDir   string              `json:"temp_dir,omitempty"`
+	EnvDir    string              `json:"env_dir,omitempty"`
 }
 
 // Ingress returns the named ingress endpoint. If no name is provided,

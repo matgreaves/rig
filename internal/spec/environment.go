@@ -25,8 +25,10 @@ type ResolvedEnvironment struct {
 }
 
 // ResolvedService is the runtime view of a single service.
+// Ingresses and egresses use ResolvedEndpoint — all attribute templates
+// have been expanded to concrete values.
 type ResolvedService struct {
-	Ingresses map[string]Endpoint `json:"ingresses"`
-	Egresses  map[string]Endpoint `json:"egresses"`
-	Status    ServiceStatus       `json:"status"`
+	Ingresses map[string]ResolvedEndpoint `json:"ingresses"`
+	Egresses  map[string]ResolvedEndpoint `json:"egresses"`
+	Status    ServiceStatus               `json:"status"`
 }

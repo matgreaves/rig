@@ -63,11 +63,10 @@ type wireCallbackRequest struct {
 }
 
 type wireWiringContext struct {
-	Ingresses  map[string]wireEndpoint `json:"ingresses,omitempty"`
-	Egresses   map[string]wireEndpoint `json:"egresses,omitempty"`
-	TempDir    string                  `json:"temp_dir,omitempty"`
-	EnvDir     string                  `json:"env_dir,omitempty"`
-	Attributes map[string]string       `json:"attributes,omitempty"`
+	Ingresses map[string]wireEndpoint `json:"ingresses,omitempty"`
+	Egresses  map[string]wireEndpoint `json:"egresses,omitempty"`
+	TempDir   string                  `json:"temp_dir,omitempty"`
+	EnvDir    string                  `json:"env_dir,omitempty"`
 }
 
 type wireEndpoint struct {
@@ -338,11 +337,10 @@ func convertWiring(w *wireWiringContext) Wiring {
 		return Wiring{}
 	}
 	return Wiring{
-		Ingresses:  convertEndpoints(w.Ingresses),
-		Egresses:   convertEndpoints(w.Egresses),
-		Attributes: w.Attributes,
-		TempDir:    w.TempDir,
-		EnvDir:     w.EnvDir,
+		Ingresses: convertEndpoints(w.Ingresses),
+		Egresses:  convertEndpoints(w.Egresses),
+		TempDir:   w.TempDir,
+		EnvDir:    w.EnvDir,
 	}
 }
 
