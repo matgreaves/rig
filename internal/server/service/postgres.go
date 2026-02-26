@@ -79,7 +79,7 @@ type pgReadyCheck struct {
 	dbName        string
 }
 
-func (c *pgReadyCheck) Check(ctx context.Context, host string, port int) error {
+func (c *pgReadyCheck) Check(ctx context.Context, addr string) error {
 	cli, err := dockerutil.Client()
 	if err != nil {
 		return fmt.Errorf("pg_isready: docker client: %w", err)

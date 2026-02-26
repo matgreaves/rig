@@ -16,8 +16,7 @@ import (
 // the check succeeds — a responding gRPC server is considered ready.
 type GRPC struct{}
 
-func (GRPC) Check(ctx context.Context, host string, port int) error {
-	addr := fmt.Sprintf("%s:%d", host, port)
+func (GRPC) Check(ctx context.Context, addr string) error {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return err

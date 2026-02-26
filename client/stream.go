@@ -70,8 +70,7 @@ type wireWiringContext struct {
 }
 
 type wireEndpoint struct {
-	Host       string         `json:"host"`
-	Port       int            `json:"port"`
+	HostPort   string         `json:"hostport"`
 	Protocol   Protocol       `json:"protocol"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
@@ -352,8 +351,7 @@ func convertEndpoints(eps map[string]wireEndpoint) map[string]Endpoint {
 	out := make(map[string]Endpoint, len(eps))
 	for name, ep := range eps {
 		out[name] = Endpoint{
-			Host:       ep.Host,
-			Port:       ep.Port,
+			HostPort:   ep.HostPort,
 			Protocol:   ep.Protocol,
 			Attributes: ep.Attributes,
 		}
@@ -368,8 +366,7 @@ func buildEnvironmentFromEvent(ev wireEvent) *Environment {
 		ingresses := make(map[string]Endpoint, len(ingressMap))
 		for ingName, ep := range ingressMap {
 			ingresses[ingName] = Endpoint{
-				Host:       ep.Host,
-				Port:       ep.Port,
+				HostPort:   ep.HostPort,
 				Protocol:   ep.Protocol,
 				Attributes: ep.Attributes,
 			}

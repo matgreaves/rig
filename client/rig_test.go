@@ -12,31 +12,31 @@ func TestEndpoint_Lookup(t *testing.T) {
 		Name: "test",
 		Services: map[string]rig.ResolvedService{
 			"api": {Ingresses: map[string]rig.Endpoint{
-				"default": {Host: "127.0.0.1", Port: 8080, Protocol: rig.HTTP},
-				"grpc":    {Host: "127.0.0.1", Port: 9090, Protocol: rig.GRPC},
+				"default": {HostPort: "127.0.0.1:8080", Protocol: rig.HTTP},
+				"grpc":    {HostPort: "127.0.0.1:9090", Protocol: rig.GRPC},
 			}},
 			"db": {Ingresses: map[string]rig.Endpoint{
-				"tcp": {Host: "127.0.0.1", Port: 5432, Protocol: rig.TCP},
+				"tcp": {HostPort: "127.0.0.1:5432", Protocol: rig.TCP},
 			}},
 		},
 	}
 
 	// Default ingress by name.
 	ep := env.Endpoint("api")
-	if ep.Port != 8080 {
-		t.Errorf("api default port = %d, want 8080", ep.Port)
+	if ep.Port() != 8080 {
+		t.Errorf("api default port = %d, want 8080", ep.Port())
 	}
 
 	// Named ingress.
 	ep = env.Endpoint("api", "grpc")
-	if ep.Port != 9090 {
-		t.Errorf("api grpc port = %d, want 9090", ep.Port)
+	if ep.Port() != 9090 {
+		t.Errorf("api grpc port = %d, want 9090", ep.Port())
 	}
 
 	// Single ingress shorthand — returns sole ingress even if not named "default".
 	ep = env.Endpoint("db")
-	if ep.Port != 5432 {
-		t.Errorf("db port = %d, want 5432", ep.Port)
+	if ep.Port() != 5432 {
+		t.Errorf("db port = %d, want 5432", ep.Port())
 	}
 }
 
@@ -46,7 +46,7 @@ func TestEndpoint_Lookup_PanicsOnMiss(t *testing.T) {
 		Name: "test",
 		Services: map[string]rig.ResolvedService{
 			"api": {Ingresses: map[string]rig.Endpoint{
-				"default": {Host: "127.0.0.1", Port: 8080, Protocol: rig.HTTP},
+				"default": {HostPort: "127.0.0.1:8080", Protocol: rig.HTTP},
 			}},
 		},
 	}
@@ -62,29 +62,28 @@ func TestEndpoint_Lookup_PanicsOnMiss(t *testing.T) {
 	})
 }
 
-func TestEndpoint_ConnectionHelpers(t *testing.T) {
+func TestEndpoint_HostPort(t *testing.T) {
 	t.Parallel()
-	httpEP := rig.Endpoint{Host: "127.0.0.1", Port: 8080, Protocol: rig.HTTP}
-	if got := httpEP.Addr(); got != "127.0.0.1:8080" {
-		t.Errorf("HTTP Addr = %q, want 127.0.0.1:8080", got)
+	httpEP := rig.Endpoint{HostPort: "127.0.0.1:8080", Protocol: rig.HTTP}
+	if got := httpEP.HostPort; got != "127.0.0.1:8080" {
+		t.Errorf("HTTP HostPort = %q, want 127.0.0.1:8080", got)
 	}
 
-	grpcEP := rig.Endpoint{Host: "127.0.0.1", Port: 9090, Protocol: rig.GRPC}
-	if got := grpcEP.Addr(); got != "127.0.0.1:9090" {
-		t.Errorf("GRPC Addr = %q, want 127.0.0.1:9090", got)
+	grpcEP := rig.Endpoint{HostPort: "127.0.0.1:9090", Protocol: rig.GRPC}
+	if got := grpcEP.HostPort; got != "127.0.0.1:9090" {
+		t.Errorf("GRPC HostPort = %q, want 127.0.0.1:9090", got)
 	}
 
-	tcpEP := rig.Endpoint{Host: "127.0.0.1", Port: 5432, Protocol: rig.TCP}
-	if got := tcpEP.Addr(); got != "127.0.0.1:5432" {
-		t.Errorf("TCP Addr = %q, want 127.0.0.1:5432", got)
+	tcpEP := rig.Endpoint{HostPort: "127.0.0.1:5432", Protocol: rig.TCP}
+	if got := tcpEP.HostPort; got != "127.0.0.1:5432" {
+		t.Errorf("TCP HostPort = %q, want 127.0.0.1:5432", got)
 	}
 }
 
 func TestEndpoint_Attr(t *testing.T) {
 	t.Parallel()
 	ep := rig.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     5432,
+		HostPort: "127.0.0.1:5432",
 		Protocol: rig.TCP,
 		Attributes: map[string]any{
 			"PGDATABASE": "testdb",

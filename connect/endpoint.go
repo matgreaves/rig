@@ -5,7 +5,11 @@
 // without depending on the full rig SDK.
 package connect
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+	"strconv"
+)
 
 // Protocol identifies the application-layer protocol an endpoint speaks.
 type Protocol string
@@ -19,15 +23,22 @@ const (
 
 // Endpoint is a resolved service endpoint with connection helpers.
 type Endpoint struct {
-	Host       string         `json:"host"`
-	Port       int            `json:"port"`
+	HostPort   string         `json:"hostport"`
 	Protocol   Protocol       `json:"protocol"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
-// Addr returns "host:port" suitable for net.Dial, grpc.Dial, etc.
-func (e Endpoint) Addr() string {
-	return fmt.Sprintf("%s:%d", e.Host, e.Port)
+// Host returns the host portion of HostPort.
+func (e Endpoint) Host() string {
+	host, _, _ := net.SplitHostPort(e.HostPort)
+	return host
+}
+
+// Port returns the port portion of HostPort as an int.
+func (e Endpoint) Port() int {
+	_, portStr, _ := net.SplitHostPort(e.HostPort)
+	port, _ := strconv.Atoi(portStr)
+	return port
 }
 
 // Attr returns the value of a named attribute as a string. Returns "" if

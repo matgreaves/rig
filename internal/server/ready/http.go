@@ -13,13 +13,13 @@ type HTTP struct {
 	Path string // default "/"
 }
 
-func (h *HTTP) Check(ctx context.Context, host string, port int) error {
+func (h *HTTP) Check(ctx context.Context, addr string) error {
 	path := h.Path
 	if path == "" {
 		path = "/"
 	}
 
-	url := fmt.Sprintf("http://%s:%d%s", host, port, path)
+	url := fmt.Sprintf("http://%s%s", addr, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err

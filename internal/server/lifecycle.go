@@ -328,7 +328,7 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 					Error:       err.Error(),
 				})
 			}
-			if err := ready.Poll(ctx, ep.Host, ep.Port, checker, readySpec, onFailure); err != nil {
+			if err := ready.Poll(ctx, ep.HostPort, checker, readySpec, onFailure); err != nil {
 				return fmt.Errorf("ingress %q: %w", ingressName, err)
 			}
 		}

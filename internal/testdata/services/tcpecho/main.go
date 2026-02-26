@@ -28,12 +28,12 @@ func run(ctx context.Context) error {
 	}
 	ep := w.Ingress()
 
-	ln, err := net.Listen("tcp", ep.Addr())
+	ln, err := net.Listen("tcp", ep.HostPort)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "tcpecho: listening on %s\n", ep.Addr())
+	fmt.Fprintf(os.Stdout, "tcpecho: listening on %s\n", ep.HostPort)
 
 	go func() {
 		<-ctx.Done()

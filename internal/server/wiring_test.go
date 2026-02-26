@@ -16,11 +16,10 @@ func TestBuildServiceEnv_ServiceLevel(t *testing.T) {
 
 func TestBuildServiceEnv_DefaultIngressUnprefixed(t *testing.T) {
 	// BuildServiceEnv resolves attribute templates against the endpoint's
-	// Host/Port at the output boundary.
+	// HostPort at the output boundary.
 	ingresses := map[string]spec.Endpoint{
 		"default": {
-			Host:     "127.0.0.1",
-			Port:     5432,
+			HostPort: "127.0.0.1:5432",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST": "${HOST}",
@@ -34,15 +33,15 @@ func TestBuildServiceEnv_DefaultIngressUnprefixed(t *testing.T) {
 	// Default ingress HOST/PORT are unprefixed.
 	assertEnvVar(t, env, "HOST", "127.0.0.1")
 	assertEnvVar(t, env, "PORT", "5432")
-	// Templates resolved against endpoint's Host/Port.
+	// Templates resolved against endpoint's HostPort.
 	assertEnvVar(t, env, "PGHOST", "127.0.0.1")
 	assertEnvVar(t, env, "PGPORT", "5432")
 }
 
 func TestBuildServiceEnv_NamedIngressPrefixed(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
-		"admin":   {Host: "127.0.0.1", Port: 9090, Protocol: spec.HTTP},
+		"default": {HostPort: "127.0.0.1:8080", Protocol: spec.HTTP},
+		"admin":   {HostPort: "127.0.0.1:9090", Protocol: spec.HTTP},
 	}
 
 	env, _ := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
@@ -59,8 +58,7 @@ func TestBuildServiceEnv_NamedIngressPrefixed(t *testing.T) {
 func TestBuildServiceEnv_EgressAlwaysPrefixed(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
 		"database": {
-			Host:     "127.0.0.1",
-			Port:     54321,
+			HostPort: "127.0.0.1:54321",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",
@@ -82,14 +80,12 @@ func TestBuildServiceEnv_EgressAlwaysPrefixed(t *testing.T) {
 func TestBuildServiceEnv_MultipleEgresses(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
 		"orders-db": {
-			Host:       "127.0.0.1",
-			Port:       54321,
+			HostPort:   "127.0.0.1:54321",
 			Protocol:   spec.TCP,
 			Attributes: map[string]any{"PGDATABASE": "orders"},
 		},
 		"users-db": {
-			Host:       "127.0.0.1",
-			Port:       54322,
+			HostPort:   "127.0.0.1:54322",
 			Protocol:   spec.TCP,
 			Attributes: map[string]any{"PGDATABASE": "users"},
 		},
@@ -105,7 +101,7 @@ func TestBuildServiceEnv_MultipleEgresses(t *testing.T) {
 
 func TestBuildServiceEnv_HyphenatedEgressName(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
-		"order-db": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP},
+		"order-db": {HostPort: "127.0.0.1:5432", Protocol: spec.TCP},
 	}
 
 	env, _ := server.BuildServiceEnv("api", nil, egresses, "/tmp", "/tmp")
@@ -117,8 +113,8 @@ func TestBuildServiceEnv_HyphenatedEgressName(t *testing.T) {
 func TestBuildServiceEnv_NoDefaultIngress(t *testing.T) {
 	// A service with only named ingresses (no "default") — all should be prefixed.
 	ingresses := map[string]spec.Endpoint{
-		"grpc": {Host: "127.0.0.1", Port: 9090, Protocol: spec.GRPC},
-		"http": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
+		"grpc": {HostPort: "127.0.0.1:9090", Protocol: spec.GRPC},
+		"http": {HostPort: "127.0.0.1:8080", Protocol: spec.HTTP},
 	}
 
 	env, _ := server.BuildServiceEnv("api", ingresses, nil, "/tmp", "/tmp")
@@ -140,8 +136,7 @@ func TestBuildServiceEnv_NoDefaultIngress(t *testing.T) {
 func TestBuildInitHookEnv_NoEgresses(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
 		"default": {
-			Host:     "127.0.0.1",
-			Port:     5432,
+			HostPort: "127.0.0.1:5432",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",
@@ -173,9 +168,9 @@ func TestBuildInitHookEnv_NoEgresses(t *testing.T) {
 
 func TestBuildInitHookEnv_MultipleIngresses(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 7233, Protocol: spec.GRPC,
+		"default": {HostPort: "127.0.0.1:7233", Protocol: spec.GRPC,
 			Attributes: map[string]any{"TEMPORAL_ADDRESS": "${HOSTPORT}"}},
-		"ui": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
+		"ui": {HostPort: "127.0.0.1:8080", Protocol: spec.HTTP},
 	}
 
 	env, _ := server.BuildInitHookEnv("temporal", ingresses, "/tmp", "/tmp")
@@ -192,10 +187,10 @@ func TestBuildInitHookEnv_MultipleIngresses(t *testing.T) {
 
 func TestBuildPrestartHookEnv_HasEgresses(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
+		"default": {HostPort: "127.0.0.1:8080", Protocol: spec.HTTP},
 	}
 	egresses := map[string]spec.Endpoint{
-		"database": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP,
+		"database": {HostPort: "127.0.0.1:5432", Protocol: spec.TCP,
 			Attributes: map[string]any{"PGHOST": "${HOST}", "PGDATABASE": "orders"}},
 	}
 
@@ -272,8 +267,7 @@ func TestBuildServiceEnv_ResolvesTemplates(t *testing.T) {
 	// BuildServiceEnv resolves templates at the output boundary.
 	ingresses := map[string]spec.Endpoint{
 		"default": {
-			Host:     "127.0.0.1",
-			Port:     5432,
+			HostPort: "127.0.0.1:5432",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",

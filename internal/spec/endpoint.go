@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -41,13 +42,25 @@ func (p Protocol) Valid() bool {
 // HOST, PORT, and HOSTPORT — seeded from the endpoint's address.
 //
 // Internal wiring between services keeps templates so container/proxy
-// address adjustment is just changing ep.Host/ep.Port — no attribute
+// address adjustment is just changing ep.HostPort — no attribute
 // rewriting needed.
 type Endpoint struct {
-	Host       string         `json:"host"`
-	Port       int            `json:"port"`
+	HostPort   string         `json:"hostport"`
 	Protocol   Protocol       `json:"protocol"`
 	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// Host returns the host portion of HostPort.
+func (ep Endpoint) Host() string {
+	host, _, _ := net.SplitHostPort(ep.HostPort)
+	return host
+}
+
+// Port returns the port portion of HostPort as an int.
+func (ep Endpoint) Port() int {
+	_, portStr, _ := net.SplitHostPort(ep.HostPort)
+	port, _ := strconv.Atoi(portStr)
+	return port
 }
 
 // ResolvedEndpoint is an Endpoint with all attribute templates expanded to
@@ -55,10 +68,22 @@ type Endpoint struct {
 // (BuildServiceEnv, buildResolvedEnvironment, dispatchCallback) should accept
 // this type to ensure templates are never leaked to consumers.
 type ResolvedEndpoint struct {
-	Host       string         `json:"host"`
-	Port       int            `json:"port"`
+	HostPort   string         `json:"hostport"`
 	Protocol   Protocol       `json:"protocol"`
 	Attributes map[string]any `json:"attributes,omitempty"`
+}
+
+// Host returns the host portion of HostPort.
+func (ep ResolvedEndpoint) Host() string {
+	host, _, _ := net.SplitHostPort(ep.HostPort)
+	return host
+}
+
+// Port returns the port portion of HostPort as an int.
+func (ep ResolvedEndpoint) Port() int {
+	_, portStr, _ := net.SplitHostPort(ep.HostPort)
+	port, _ := strconv.Atoi(portStr)
+	return port
 }
 
 // Resolve expands ${VAR} template references in ep.Attributes and returns
@@ -68,8 +93,7 @@ type ResolvedEndpoint struct {
 // Returns an error if a template references an unknown variable.
 func (ep Endpoint) Resolve() (ResolvedEndpoint, error) {
 	re := ResolvedEndpoint{
-		Host:     ep.Host,
-		Port:     ep.Port,
+		HostPort: ep.HostPort,
 		Protocol: ep.Protocol,
 	}
 	if ep.Attributes == nil {
@@ -99,11 +123,11 @@ func ResolveAttributes(ep Endpoint) (map[string]any, error) {
 		return make(map[string]any), nil
 	}
 
-	portStr := strconv.Itoa(ep.Port)
+	host, portStr, _ := net.SplitHostPort(ep.HostPort)
 	builtins := map[string]string{
-		"HOST":     ep.Host,
+		"HOST":     host,
 		"PORT":     portStr,
-		"HOSTPORT": ep.Host + ":" + portStr,
+		"HOSTPORT": ep.HostPort,
 	}
 
 	resolved := make(map[string]any, len(ep.Attributes))

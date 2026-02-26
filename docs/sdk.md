@@ -108,7 +108,7 @@ Runs a function in the test process as a service.
 ```go
 rig.Func(func(ctx context.Context) error {
     w, _ := connect.ParseWiring(ctx)
-    return http.ListenAndServe(fmt.Sprintf(":%d", w.Ingress().Port), handler)
+    return http.ListenAndServe(w.Ingress().HostPort, handler)
 })
 ```
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,7 +87,7 @@ func (f *Forwarder) handleKafkaConn(ctx context.Context, client net.Conn) {
 		},
 	})
 
-	target, err := net.DialTimeout("tcp", f.targetAddr(), 5*time.Second)
+	target, err := net.DialTimeout("tcp", f.Target.HostPort, 5*time.Second)
 	if err != nil {
 		client.Close()
 		f.Emit(Event{
@@ -108,8 +109,9 @@ func (f *Forwarder) handleKafkaConn(ctx context.Context, client net.Conn) {
 	}()
 
 	tracker := newCorrelationTracker()
-	proxyHost := "127.0.0.1"
-	proxyPort := int32(f.ListenPort)
+	proxyHost, proxyPortStr, _ := net.SplitHostPort(f.ListenAddr)
+	proxyPort64, _ := strconv.ParseInt(proxyPortStr, 10, 32)
+	proxyPort := int32(proxyPort64)
 
 	var bytesIn, bytesOut atomic.Int64
 	var wg sync.WaitGroup

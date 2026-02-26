@@ -12,8 +12,7 @@ import (
 
 func TestAddr(t *testing.T) {
 	ep := connect.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     7233,
+		HostPort: "127.0.0.1:7233",
 		Protocol: connect.GRPC,
 		Attributes: map[string]any{
 			"TEMPORAL_ADDRESS":   "127.0.0.1:7233",
@@ -26,7 +25,7 @@ func TestAddr(t *testing.T) {
 }
 
 func TestAddr_Missing(t *testing.T) {
-	ep := connect.Endpoint{Host: "127.0.0.1", Port: 7233}
+	ep := connect.Endpoint{HostPort: "127.0.0.1:7233"}
 	if got := temporalx.Addr(ep); got != "" {
 		t.Errorf("Addr = %q, want empty", got)
 	}
@@ -34,8 +33,7 @@ func TestAddr_Missing(t *testing.T) {
 
 func TestNamespace(t *testing.T) {
 	ep := connect.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     7233,
+		HostPort: "127.0.0.1:7233",
 		Protocol: connect.GRPC,
 		Attributes: map[string]any{
 			"TEMPORAL_ADDRESS":   "127.0.0.1:7233",
@@ -48,7 +46,7 @@ func TestNamespace(t *testing.T) {
 }
 
 func TestNamespace_Missing(t *testing.T) {
-	ep := connect.Endpoint{Host: "127.0.0.1", Port: 7233}
+	ep := connect.Endpoint{HostPort: "127.0.0.1:7233"}
 	if got := temporalx.Namespace(ep); got != "" {
 		t.Errorf("Namespace = %q, want empty", got)
 	}

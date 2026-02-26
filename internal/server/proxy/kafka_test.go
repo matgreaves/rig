@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -820,8 +821,8 @@ func TestKafkaProxy_EndToEnd(t *testing.T) {
 	var eventMu sync.Mutex
 
 	f := &Forwarder{
-		ListenPort: proxyAddr.Port,
-		Target: spec.Endpoint{Host: "127.0.0.1", Port: brokerAddr.Port, Protocol: spec.Kafka},
+		ListenAddr: proxyAddr.String(),
+		Target:     spec.Endpoint{HostPort: fmt.Sprintf("127.0.0.1:%d", brokerAddr.Port), Protocol: spec.Kafka},
 		Source:     "test-client",
 		TargetSvc:  "kafka",
 		Ingress:    "default",

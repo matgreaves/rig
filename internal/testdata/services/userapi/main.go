@@ -34,7 +34,7 @@ func run(ctx context.Context) error {
 
 	pg := w.Egress("db")
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		pg.Host, pg.Port, pg.Attr("PGUSER"), pg.Attr("PGPASSWORD"), pg.Attr("PGDATABASE"))
+		pg.Host(), pg.Port(), pg.Attr("PGUSER"), pg.Attr("PGPASSWORD"), pg.Attr("PGDATABASE"))
 
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

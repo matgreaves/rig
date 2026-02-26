@@ -18,7 +18,7 @@ import (
 func (f *Forwarder) runGRPC(ctx context.Context) error {
 	target := &url.URL{
 		Scheme: "http",
-		Host:   f.targetAddr(),
+		Host:   f.Target.HostPort,
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
