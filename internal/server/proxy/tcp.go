@@ -46,7 +46,7 @@ func (f *Forwarder) handleTCPConn(ctx context.Context, client net.Conn) {
 		},
 	})
 
-	target, err := net.DialTimeout("tcp", f.targetAddr(), 5*time.Second)
+	target, err := net.DialTimeout("tcp", f.Target.HostPort, 5*time.Second)
 	if err != nil {
 		client.Close()
 		f.Emit(Event{

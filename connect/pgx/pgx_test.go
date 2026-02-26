@@ -11,8 +11,7 @@ import (
 
 func TestDSN(t *testing.T) {
 	ep := connect.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     5432,
+		HostPort: "127.0.0.1:5432",
 		Protocol: connect.TCP,
 		Attributes: map[string]any{
 			"PGHOST":     "127.0.0.1",
@@ -29,7 +28,7 @@ func TestDSN(t *testing.T) {
 }
 
 func TestDSN_Missing(t *testing.T) {
-	ep := connect.Endpoint{Host: "127.0.0.1", Port: 5432}
+	ep := connect.Endpoint{HostPort: "127.0.0.1:5432"}
 	want := "postgres://:@:/?sslmode=disable"
 	if got := rigpgx.DSN(ep); got != want {
 		t.Errorf("DSN = %q, want %q", got, want)

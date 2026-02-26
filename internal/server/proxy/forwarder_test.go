@@ -9,10 +9,9 @@ import (
 
 func TestForwarderEndpoint_TemplateAttrsPassThrough(t *testing.T) {
 	f := &proxy.Forwarder{
-		ListenPort: 9999,
+		ListenAddr: "127.0.0.1:9999",
 		Target: spec.Endpoint{
-			Host:     "10.0.0.5",
-			Port:     5432,
+			HostPort: "10.0.0.5:5432",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",
@@ -24,18 +23,15 @@ func TestForwarderEndpoint_TemplateAttrsPassThrough(t *testing.T) {
 
 	ep := f.Endpoint()
 
-	if ep.Host != "127.0.0.1" {
-		t.Errorf("Host = %q, want 127.0.0.1", ep.Host)
-	}
-	if ep.Port != 9999 {
-		t.Errorf("Port = %d, want 9999", ep.Port)
+	if ep.HostPort != "127.0.0.1:9999" {
+		t.Errorf("HostPort = %q, want 127.0.0.1:9999", ep.HostPort)
 	}
 	if ep.Protocol != spec.TCP {
 		t.Errorf("Protocol = %q, want tcp", ep.Protocol)
 	}
 
 	// Template attributes should be copied unchanged — they resolve
-	// against the proxy's Host/Port when consumed downstream.
+	// against the proxy's HostPort when consumed downstream.
 	if got := ep.Attributes["PGHOST"]; got != "${HOST}" {
 		t.Errorf("PGHOST = %v, want ${HOST}", got)
 	}
@@ -51,10 +47,9 @@ func TestForwarderEndpoint_TemplateAttrsPassThrough(t *testing.T) {
 
 func TestForwarderEndpoint_HostPort(t *testing.T) {
 	f := &proxy.Forwarder{
-		ListenPort: 7233,
+		ListenAddr: "127.0.0.1:7233",
 		Target: spec.Endpoint{
-			Host:     "10.0.0.5",
-			Port:     7233,
+			HostPort: "10.0.0.5:7233",
 			Protocol: spec.GRPC,
 			Attributes: map[string]any{
 				"TEMPORAL_ADDRESS":   "${HOSTPORT}",
@@ -86,10 +81,9 @@ func TestForwarderEndpoint_HostPort(t *testing.T) {
 
 func TestForwarderEndpoint_NoAttributes(t *testing.T) {
 	f := &proxy.Forwarder{
-		ListenPort: 8080,
+		ListenAddr: "127.0.0.1:8080",
 		Target: spec.Endpoint{
-			Host:     "10.0.0.5",
-			Port:     8080,
+			HostPort: "10.0.0.5:8080",
 			Protocol: spec.HTTP,
 			Attributes: map[string]any{
 				"FOO": "bar",
@@ -107,10 +101,9 @@ func TestForwarderEndpoint_NoAttributes(t *testing.T) {
 
 func TestForwarderEndpoint_NilAttributes(t *testing.T) {
 	f := &proxy.Forwarder{
-		ListenPort: 8080,
+		ListenAddr: "127.0.0.1:8080",
 		Target: spec.Endpoint{
-			Host:     "10.0.0.5",
-			Port:     8080,
+			HostPort: "10.0.0.5:8080",
 			Protocol: spec.HTTP,
 		},
 	}

@@ -293,7 +293,7 @@ func TestServer(t *testing.T) {
 			t.Errorf("echo status = %q, want %q", echoSvc.Status, spec.StatusReady)
 		}
 		ep, ok := echoSvc.Ingresses["default"]
-		if !ok || ep.Port == 0 {
+		if !ok || ep.HostPort == "" {
 			t.Fatal("'default' ingress not resolved in GET response")
 		}
 

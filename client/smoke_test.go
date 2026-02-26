@@ -28,7 +28,7 @@ func TestSmoke(t *testing.T) {
 		}),
 	}, rig.WithTimeout(30*time.Second))
 
-	resp, err := http.Get("http://" + env.Endpoint("echo").Addr() + "/")
+	resp, err := http.Get("http://" + env.Endpoint("echo").HostPort + "/")
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

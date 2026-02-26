@@ -77,10 +77,10 @@ func (Temporal) Runner(params StartParams) run.Runner {
 	grpcPort := 0
 	uiPort := 0
 	if ep, ok := params.Ingresses["default"]; ok {
-		grpcPort = ep.Port
+		grpcPort = ep.Port()
 	}
 	if ep, ok := params.Ingresses["ui"]; ok {
-		uiPort = ep.Port
+		uiPort = ep.Port()
 	}
 
 	args := []string{

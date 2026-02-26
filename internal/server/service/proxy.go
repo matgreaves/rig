@@ -81,8 +81,7 @@ func (p *Proxy) Publish(_ context.Context, params PublishParams) (map[string]spe
 
 	return map[string]spec.Endpoint{
 		"default": {
-			Host:       "127.0.0.1",
-			Port:       port,
+			HostPort:   fmt.Sprintf("127.0.0.1:%d", port),
 			Protocol:   target.Protocol,
 			Attributes: attrs,
 		},
@@ -109,7 +108,7 @@ func (p *Proxy) Runner(params StartParams) run.Runner {
 		}
 
 		fwd := &proxy.Forwarder{
-			ListenPort: ingress.Port,
+			ListenAddr: ingress.HostPort,
 			Target:     target,
 			Source:     cfg.Source,
 			TargetSvc:  cfg.TargetSvc,
@@ -126,8 +125,7 @@ func (p *Proxy) Runner(params StartParams) run.Runner {
 			if dec := p.cachedReflection(cfg.ReflectionKey); dec != nil {
 				fwd.Decoder = dec
 			} else {
-				addr := fmt.Sprintf("%s:%d", target.Host, target.Port)
-				dec = proxy.ProbeReflection(ctx, addr)
+				dec = proxy.ProbeReflection(ctx, target.HostPort)
 				fwd.Decoder = dec
 				p.cacheReflection(cfg.ReflectionKey, dec)
 			}

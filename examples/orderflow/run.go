@@ -43,7 +43,7 @@ func Run(ctx context.Context) error {
 	}
 	defer tc.Close()
 
-	logger.Info("connected", "db", w.Egress("db").Addr(), "temporal", w.Egress("temporal").Addr())
+	logger.Info("connected", "db", w.Egress("db").HostPort, "temporal", w.Egress("temporal").HostPort)
 
 	// Start Temporal worker — inherits the client's logger.
 	wkr := worker.New(tc, "orders", worker.Options{})

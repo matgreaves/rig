@@ -154,8 +154,7 @@ func PublishLocalEndpoints(params PublishParams) (map[string]spec.Endpoint, erro
 			return nil, fmt.Errorf("no port allocated for ingress %q", name)
 		}
 		endpoints[name] = spec.Endpoint{
-			Host:       "127.0.0.1",
-			Port:       port,
+			HostPort:   fmt.Sprintf("127.0.0.1:%d", port),
 			Protocol:   ingSpec.Protocol,
 			Attributes: ingSpec.Attributes,
 		}

@@ -12,7 +12,7 @@ env := rig.Up(t, rig.Services{
     "temporal": rig.Temporal(),
     "api":      rig.Go("./cmd/api").Egress("db").Egress("temporal"),
 })
-ep := env.Endpoint("api") // connect.Endpoint{Host, Port, Protocol, Attributes}
+ep := env.Endpoint("api") // connect.Endpoint{HostPort, Protocol, Attributes}
 ```
 
 `rig.Up` blocks until all services are healthy and registers `t.Cleanup` for teardown. `rigd` is auto-downloaded on first use.
@@ -50,7 +50,7 @@ Services declare dependencies with `.Egress("service")`. Rig resolves the depend
 ```go
 w, _ := connect.ParseWiring(ctx)
 dbEp := w.Egress("db")       // connect.Endpoint
-addr := dbEp.Addr()           // "host:port"
+addr := dbEp.HostPort         // "host:port"
 dsn := connect.PostgresDSN(dbEp)
 ```
 

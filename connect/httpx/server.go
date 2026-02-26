@@ -34,7 +34,7 @@ func ListenAndServe(ctx context.Context, handler http.Handler) error {
 // with a 5-second timeout.
 func Serve(ctx context.Context, ep connect.Endpoint, handler http.Handler) error {
 	srv := &http.Server{
-		Addr:    ep.Addr(),
+		Addr:    ep.HostPort,
 		Handler: handler,
 	}
 

@@ -25,11 +25,8 @@ func TestProcessPublish_SingleIngress(t *testing.T) {
 	if !ok {
 		t.Fatal("missing default endpoint")
 	}
-	if ep.Host != "127.0.0.1" {
-		t.Errorf("host = %q, want 127.0.0.1", ep.Host)
-	}
-	if ep.Port != 8080 {
-		t.Errorf("port = %d, want 8080", ep.Port)
+	if ep.HostPort != "127.0.0.1:8080" {
+		t.Errorf("hostport = %q, want 127.0.0.1:8080", ep.HostPort)
 	}
 	if ep.Protocol != spec.HTTP {
 		t.Errorf("protocol = %q, want http", ep.Protocol)
@@ -53,11 +50,11 @@ func TestProcessPublish_MultipleIngresses(t *testing.T) {
 	if len(endpoints) != 2 {
 		t.Fatalf("expected 2 endpoints, got %d", len(endpoints))
 	}
-	if endpoints["http"].Port != 8080 {
-		t.Errorf("http port = %d, want 8080", endpoints["http"].Port)
+	if endpoints["http"].HostPort != "127.0.0.1:8080" {
+		t.Errorf("http hostport = %q, want 127.0.0.1:8080", endpoints["http"].HostPort)
 	}
-	if endpoints["grpc"].Port != 9090 {
-		t.Errorf("grpc port = %d, want 9090", endpoints["grpc"].Port)
+	if endpoints["grpc"].HostPort != "127.0.0.1:9090" {
+		t.Errorf("grpc hostport = %q, want 127.0.0.1:9090", endpoints["grpc"].HostPort)
 	}
 }
 

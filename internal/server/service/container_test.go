@@ -10,7 +10,7 @@ import (
 
 func TestAdjustIngressEndpoints_Host(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 8080, Protocol: spec.HTTP},
+		"default": {HostPort: "127.0.0.1:8080", Protocol: spec.HTTP},
 	}
 	specs := map[string]spec.IngressSpec{
 		"default": {Protocol: spec.HTTP},
@@ -18,18 +18,18 @@ func TestAdjustIngressEndpoints_Host(t *testing.T) {
 
 	adjusted := adjustIngressEndpoints(ingresses, specs)
 
-	if adjusted["default"].Host != "0.0.0.0" {
-		t.Errorf("host = %q, want 0.0.0.0", adjusted["default"].Host)
+	if adjusted["default"].Host() != "0.0.0.0" {
+		t.Errorf("host = %q, want 0.0.0.0", adjusted["default"].Host())
 	}
 	// Port unchanged when no ContainerPort set.
-	if adjusted["default"].Port != 8080 {
-		t.Errorf("port = %d, want 8080", adjusted["default"].Port)
+	if adjusted["default"].Port() != 8080 {
+		t.Errorf("port = %d, want 8080", adjusted["default"].Port())
 	}
 }
 
 func TestAdjustIngressEndpoints_ContainerPort(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 54321, Protocol: spec.HTTP},
+		"default": {HostPort: "127.0.0.1:54321", Protocol: spec.HTTP},
 	}
 	specs := map[string]spec.IngressSpec{
 		"default": {Protocol: spec.HTTP, ContainerPort: 80},
@@ -37,18 +37,18 @@ func TestAdjustIngressEndpoints_ContainerPort(t *testing.T) {
 
 	adjusted := adjustIngressEndpoints(ingresses, specs)
 
-	if adjusted["default"].Host != "0.0.0.0" {
-		t.Errorf("host = %q, want 0.0.0.0", adjusted["default"].Host)
+	if adjusted["default"].Host() != "0.0.0.0" {
+		t.Errorf("host = %q, want 0.0.0.0", adjusted["default"].Host())
 	}
-	if adjusted["default"].Port != 80 {
-		t.Errorf("port = %d, want 80 (ContainerPort)", adjusted["default"].Port)
+	if adjusted["default"].Port() != 80 {
+		t.Errorf("port = %d, want 80 (ContainerPort)", adjusted["default"].Port())
 	}
 }
 
 func TestAdjustIngressEndpoints_Named(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"http": {Host: "127.0.0.1", Port: 54321},
-		"grpc": {Host: "127.0.0.1", Port: 54322},
+		"http": {HostPort: "127.0.0.1:54321"},
+		"grpc": {HostPort: "127.0.0.1:54322"},
 	}
 	specs := map[string]spec.IngressSpec{
 		"http": {Protocol: spec.HTTP, ContainerPort: 80},
@@ -57,22 +57,22 @@ func TestAdjustIngressEndpoints_Named(t *testing.T) {
 
 	adjusted := adjustIngressEndpoints(ingresses, specs)
 
-	if adjusted["http"].Port != 80 {
-		t.Errorf("http port = %d, want 80", adjusted["http"].Port)
+	if adjusted["http"].Port() != 80 {
+		t.Errorf("http port = %d, want 80", adjusted["http"].Port())
 	}
-	if adjusted["grpc"].Port != 9090 {
-		t.Errorf("grpc port = %d, want 9090", adjusted["grpc"].Port)
+	if adjusted["grpc"].Port() != 9090 {
+		t.Errorf("grpc port = %d, want 9090", adjusted["grpc"].Port())
 	}
 	for name, ep := range adjusted {
-		if ep.Host != "0.0.0.0" {
-			t.Errorf("%s host = %q, want 0.0.0.0", name, ep.Host)
+		if ep.Host() != "0.0.0.0" {
+			t.Errorf("%s host = %q, want 0.0.0.0", name, ep.Host())
 		}
 	}
 }
 
 func TestAdjustIngressEndpoints_DoesNotMutateOriginal(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 54321},
+		"default": {HostPort: "127.0.0.1:54321"},
 	}
 	specs := map[string]spec.IngressSpec{
 		"default": {Protocol: spec.HTTP, ContainerPort: 80},
@@ -81,19 +81,15 @@ func TestAdjustIngressEndpoints_DoesNotMutateOriginal(t *testing.T) {
 	_ = adjustIngressEndpoints(ingresses, specs)
 
 	// Original should be unchanged.
-	if ingresses["default"].Host != "127.0.0.1" {
+	if ingresses["default"].HostPort != "127.0.0.1:54321" {
 		t.Error("original ingress was mutated")
-	}
-	if ingresses["default"].Port != 54321 {
-		t.Error("original ingress port was mutated")
 	}
 }
 
 func TestAdjustIngressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
 		"default": {
-			Host:     "127.0.0.1",
-			Port:     54321,
+			HostPort: "127.0.0.1:54321",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",
@@ -123,28 +119,27 @@ func TestAdjustIngressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
 
 func TestAdjustEgressEndpoints(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
-		"database": {Host: "127.0.0.1", Port: 5432, Protocol: spec.TCP},
-		"cache":    {Host: "127.0.0.1", Port: 6379, Protocol: spec.TCP},
+		"database": {HostPort: "127.0.0.1:5432", Protocol: spec.TCP},
+		"cache":    {HostPort: "127.0.0.1:6379", Protocol: spec.TCP},
 	}
 
 	adjusted := adjustEgressEndpoints(egresses, "host.docker.internal")
 
 	for name, ep := range adjusted {
-		if ep.Host != "host.docker.internal" {
-			t.Errorf("%s host = %q, want host.docker.internal", name, ep.Host)
+		if ep.Host() != "host.docker.internal" {
+			t.Errorf("%s host = %q, want host.docker.internal", name, ep.Host())
 		}
 	}
 	// Ports unchanged.
-	if adjusted["database"].Port != 5432 {
-		t.Errorf("database port = %d, want 5432", adjusted["database"].Port)
+	if adjusted["database"].Port() != 5432 {
+		t.Errorf("database port = %d, want 5432", adjusted["database"].Port())
 	}
 }
 
 func TestAdjustEgressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
 		"database": {
-			Host:     "127.0.0.1",
-			Port:     5432,
+			HostPort: "127.0.0.1:5432",
 			Protocol: spec.TCP,
 			Attributes: map[string]any{
 				"PGHOST":     "${HOST}",
@@ -171,12 +166,12 @@ func TestAdjustEgressEndpoints_TemplateAttrsPassThrough(t *testing.T) {
 
 func TestAdjustEgressEndpoints_DoesNotMutateOriginal(t *testing.T) {
 	egresses := map[string]spec.Endpoint{
-		"database": {Host: "127.0.0.1", Port: 5432},
+		"database": {HostPort: "127.0.0.1:5432"},
 	}
 
 	_ = adjustEgressEndpoints(egresses, "host.docker.internal")
 
-	if egresses["database"].Host != "127.0.0.1" {
+	if egresses["database"].HostPort != "127.0.0.1:5432" {
 		t.Error("original egress was mutated")
 	}
 }
@@ -205,7 +200,7 @@ func TestExpandAll_Nil(t *testing.T) {
 
 func TestBuildPortBindings_ContainerPort(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 54321},
+		"default": {HostPort: "127.0.0.1:54321"},
 	}
 	ingressSpecs := map[string]spec.IngressSpec{
 		"default": {Protocol: spec.TCP, ContainerPort: 5432},
@@ -224,7 +219,7 @@ func TestBuildPortBindings_ContainerPort(t *testing.T) {
 
 func TestBuildPortBindings_RigNativeApp(t *testing.T) {
 	ingresses := map[string]spec.Endpoint{
-		"default": {Host: "127.0.0.1", Port: 54321},
+		"default": {HostPort: "127.0.0.1:54321"},
 	}
 	ingressSpecs := map[string]spec.IngressSpec{
 		"default": {Protocol: spec.HTTP, ContainerPort: 0},
@@ -306,7 +301,7 @@ func TestAdjustTempDirsInWiring_NoWiring(t *testing.T) {
 func TestAdjustTempDirsInWiring_PreservesOtherFields(t *testing.T) {
 	wiring := map[string]any{
 		"ingresses": map[string]any{
-			"default": map[string]any{"host": "0.0.0.0", "port": 8080},
+			"default": map[string]any{"hostport": "0.0.0.0:8080"},
 		},
 		"temp_dir": "/host/path/svc",
 		"env_dir":  "/host/path",

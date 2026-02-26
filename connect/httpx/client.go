@@ -31,7 +31,7 @@ type Client struct {
 
 // New creates an HTTP client from a resolved endpoint.
 func New(ep connect.Endpoint) *Client {
-	return &Client{BaseURL: "http://" + ep.Addr()}
+	return &Client{BaseURL: "http://" + ep.HostPort}
 }
 
 // NewClient creates an HTTP client for the given base URL string.

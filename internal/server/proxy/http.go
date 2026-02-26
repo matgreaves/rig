@@ -24,7 +24,7 @@ const maxBodyCapture = 64 * 1024 // 64KB
 func (f *Forwarder) runHTTP(ctx context.Context) error {
 	target := &url.URL{
 		Scheme: "http",
-		Host:   f.targetAddr(),
+		Host:   f.Target.HostPort,
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)

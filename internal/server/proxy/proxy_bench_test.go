@@ -64,10 +64,9 @@ func BenchmarkHTTPProxied(b *testing.B) {
 
 	// Create and start the forwarder.
 	fwd := &proxy.Forwarder{
-		ListenPort: proxyPort,
+		ListenAddr: fmt.Sprintf("127.0.0.1:%d", proxyPort),
 		Target: spec.Endpoint{
-			Host:     backendHost,
-			Port:     backendPort,
+			HostPort: fmt.Sprintf("%s:%d", backendHost, backendPort),
 			Protocol: "http",
 		},
 		Source:    "external",

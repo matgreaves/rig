@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -140,8 +141,9 @@ func addEndpointAttrs(env map[string]string, prefix string, ep spec.ResolvedEndp
 		}
 	}
 
-	set("HOST", ep.Host)
-	set("PORT", fmt.Sprintf("%d", ep.Port))
+	host, portStr, _ := net.SplitHostPort(ep.HostPort)
+	set("HOST", host)
+	set("PORT", portStr)
 
 	for k, v := range ep.Attributes {
 		set(k, fmt.Sprintf("%v", v))

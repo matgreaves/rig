@@ -346,10 +346,11 @@ func dockerHostIP() string {
 func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string]spec.IngressSpec) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(ingresses))
 	for name, ep := range ingresses {
-		ep.Host = "0.0.0.0"
+		port := ep.Port()
 		if is, ok := specs[name]; ok && is.ContainerPort != 0 {
-			ep.Port = is.ContainerPort
+			port = is.ContainerPort
 		}
+		ep.HostPort = fmt.Sprintf("0.0.0.0:%d", port)
 		adjusted[name] = ep
 	}
 	return adjusted
@@ -362,7 +363,7 @@ func adjustIngressEndpoints(ingresses map[string]spec.Endpoint, specs map[string
 func adjustEgressEndpoints(egresses map[string]spec.Endpoint, hostIP string) map[string]spec.Endpoint {
 	adjusted := make(map[string]spec.Endpoint, len(egresses))
 	for name, ep := range egresses {
-		ep.Host = strings.ReplaceAll(ep.Host, "127.0.0.1", hostIP)
+		ep.HostPort = strings.ReplaceAll(ep.HostPort, "127.0.0.1", hostIP)
 		adjusted[name] = ep
 	}
 	return adjusted
@@ -434,7 +435,7 @@ func buildPortBindings(ingresses map[string]spec.Endpoint, ingressSpecs map[stri
 		containerPort := ingressSpecs[name].ContainerPort
 		if containerPort == 0 {
 			// Rig-native app: listen on the same port rig allocated.
-			containerPort = ep.Port
+			containerPort = ep.Port()
 		}
 
 		proto := "tcp"
@@ -442,7 +443,7 @@ func buildPortBindings(ingresses map[string]spec.Endpoint, ingressSpecs map[stri
 		exposedPorts[containerPortStr] = struct{}{}
 		portBindings[containerPortStr] = []nat.PortBinding{{
 			HostIP:   "127.0.0.1",
-			HostPort: strconv.Itoa(ep.Port),
+			HostPort: strconv.Itoa(ep.Port()),
 		}}
 	}
 

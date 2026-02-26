@@ -21,7 +21,7 @@ const (
 
 // Checker performs a single readiness probe against an endpoint.
 type Checker interface {
-	Check(ctx context.Context, host string, port int) error
+	Check(ctx context.Context, addr string) error
 }
 
 // ForEndpoint returns a Checker appropriate for the given endpoint,
@@ -51,7 +51,7 @@ func ForEndpoint(ep spec.Endpoint, readySpec *spec.ReadySpec) Checker {
 //
 // If onFailure is non-nil it is called after each failed probe with the
 // check error, giving the caller an opportunity to log or emit events.
-func Poll(ctx context.Context, host string, port int, checker Checker, readySpec *spec.ReadySpec, onFailure func(err error)) error {
+func Poll(ctx context.Context, addr string, checker Checker, readySpec *spec.ReadySpec, onFailure func(err error)) error {
 	timeout := DefaultTimeout
 	interval := DefaultInitialInterval
 
@@ -70,7 +70,7 @@ func Poll(ctx context.Context, host string, port int, checker Checker, readySpec
 	var lastErr error
 
 	for {
-		if err := checker.Check(ctx, host, port); err == nil {
+		if err := checker.Check(ctx, addr); err == nil {
 			return nil
 		} else {
 			lastErr = err

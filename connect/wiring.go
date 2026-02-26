@@ -73,13 +73,12 @@ func ParseWiring(ctx context.Context) (*Wiring, error) {
 	if host == "" || portStr == "" {
 		return nil, fmt.Errorf("HOST and PORT must be set (or RIG_WIRING)")
 	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
+	if _, err := strconv.Atoi(portStr); err != nil {
 		return nil, fmt.Errorf("invalid PORT %q: %w", portStr, err)
 	}
 	return &Wiring{
 		Ingresses: map[string]Endpoint{
-			"default": {Host: host, Port: port},
+			"default": {HostPort: host + ":" + portStr},
 		},
 	}, nil
 }

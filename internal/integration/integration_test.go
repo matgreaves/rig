@@ -176,7 +176,7 @@ func TestUp(t *testing.T) {
 		}
 
 		// DB should be reachable via TCP.
-		conn, err := net.DialTimeout("tcp", env.Endpoint("db").Addr(), 2*time.Second)
+		conn, err := net.DialTimeout("tcp", env.Endpoint("db").HostPort, 2*time.Second)
 		if err != nil {
 			t.Fatalf("db dial: %v", err)
 		}
@@ -308,7 +308,7 @@ func TestUp(t *testing.T) {
 		}
 
 		// DB should be reachable via TCP.
-		conn, err := net.DialTimeout("tcp", env.Endpoint("db").Addr(), 2*time.Second)
+		conn, err := net.DialTimeout("tcp", env.Endpoint("db").HostPort, 2*time.Second)
 		if err != nil {
 			t.Fatalf("db dial: %v", err)
 		}
@@ -351,7 +351,7 @@ func TestUp(t *testing.T) {
 		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
 		ep := env.Endpoint("nginx")
-		resp, err := http.Get("http://" + ep.Addr() + "/")
+		resp, err := http.Get("http://" + ep.HostPort + "/")
 		if err != nil {
 			t.Fatalf("nginx request: %v", err)
 		}
@@ -371,7 +371,7 @@ func TestUp(t *testing.T) {
 		ep := env.Endpoint("db")
 
 		// Verify TCP connectivity.
-		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
 		if err != nil {
 			t.Fatalf("postgres dial: %v", err)
 		}
@@ -404,7 +404,7 @@ func TestUp(t *testing.T) {
 
 		// gRPC port reachable.
 		ep := env.Endpoint("temporal")
-		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
 		if err != nil {
 			t.Fatalf("temporal dial: %v", err)
 		}
@@ -420,7 +420,7 @@ func TestUp(t *testing.T) {
 
 		// UI reachable.
 		uiEP := env.Endpoint("temporal", "ui")
-		resp, err := http.Get("http://" + uiEP.Addr())
+		resp, err := http.Get("http://" + uiEP.HostPort)
 		if err != nil {
 			t.Fatalf("temporal UI request: %v", err)
 		}
@@ -469,7 +469,7 @@ func TestUp(t *testing.T) {
 
 		// Verify service is reachable.
 		ep := env.Endpoint("db")
-		conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
 		if err != nil {
 			t.Fatalf("postgres dial: %v", err)
 		}
@@ -839,7 +839,7 @@ func TestObserveAttributes(t *testing.T) {
 	ep := env.Endpoint("temporal")
 
 	// TEMPORAL_ADDRESS must match the proxy endpoint, not the real service.
-	wantAddr := fmt.Sprintf("127.0.0.1:%d", ep.Port)
+	wantAddr := fmt.Sprintf("127.0.0.1:%d", ep.Port())
 	if got := ep.Attr("TEMPORAL_ADDRESS"); got != wantAddr {
 		t.Errorf("TEMPORAL_ADDRESS = %q, want %q (proxy address)", got, wantAddr)
 	}
@@ -850,7 +850,7 @@ func TestObserveAttributes(t *testing.T) {
 	}
 
 	// Verify TCP connectivity through the proxy.
-	conn, err := net.DialTimeout("tcp", ep.Addr(), 5*time.Second)
+	conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
 	if err != nil {
 		t.Fatalf("temporal dial through proxy: %v", err)
 	}
@@ -870,7 +870,7 @@ func TestObserveTCP(t *testing.T) {
 
 	// Connect through the proxy.
 	ep := env.Endpoint("tcpecho")
-	conn, err := net.DialTimeout("tcp", ep.Addr(), 2*time.Second)
+	conn, err := net.DialTimeout("tcp", ep.HostPort, 2*time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -939,7 +939,7 @@ func TestObserveGRPC(t *testing.T) {
 
 	// Make a gRPC health check call through the proxy endpoint.
 	ep := env.Endpoint("temporal")
-	conn, err := grpc.NewClient(ep.Addr(),
+	conn, err := grpc.NewClient(ep.HostPort,
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("grpc dial: %v", err)
@@ -1037,7 +1037,7 @@ func TestFuncLogWriter(t *testing.T) {
 	}, rig.WithServer(serverURL), rig.WithTimeout(30*time.Second))
 
 	// Hit the service to confirm it's up.
-	resp, err := http.Get("http://" + env.Endpoint("logger").Addr() + "/")
+	resp, err := http.Get("http://" + env.Endpoint("logger").HostPort + "/")
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}

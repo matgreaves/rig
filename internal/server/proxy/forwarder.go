@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"fmt"
 	"net"
 
 	"github.com/matgreaves/rig/internal/spec"
@@ -13,7 +12,7 @@ import (
 // It listens on a single port and forwards to the real service endpoint,
 // emitting events for each request or connection.
 type Forwarder struct {
-	ListenPort int
+	ListenAddr string
 	Target     spec.Endpoint // real service endpoint to forward to
 	Source     string        // source service name or "external"
 	TargetSvc  string        // target service name
@@ -26,7 +25,7 @@ type Forwarder struct {
 
 // Endpoint returns the proxy endpoint that callers should connect to.
 // Attributes are copied unchanged — they contain templates (e.g. "${HOST}")
-// that resolve correctly against the proxy's Host/Port when consumed.
+// that resolve correctly against the proxy's HostPort when consumed.
 func (f *Forwarder) Endpoint() spec.Endpoint {
 	// Shallow copy attributes so mutations downstream don't corrupt the target.
 	var attrs map[string]any
@@ -37,8 +36,7 @@ func (f *Forwarder) Endpoint() spec.Endpoint {
 		}
 	}
 	return spec.Endpoint{
-		Host:       "127.0.0.1",
-		Port:       f.ListenPort,
+		HostPort:   f.ListenAddr,
 		Protocol:   f.Target.Protocol,
 		Attributes: attrs,
 	}
@@ -67,15 +65,5 @@ func (f *Forwarder) getListener() (net.Listener, error) {
 	if f.Listener != nil {
 		return f.Listener, nil
 	}
-	return net.Listen("tcp", f.listenAddr())
-}
-
-// targetAddr returns host:port of the real service.
-func (f *Forwarder) targetAddr() string {
-	return fmt.Sprintf("%s:%d", f.Target.Host, f.Target.Port)
-}
-
-// listenAddr returns the proxy listen address.
-func (f *Forwarder) listenAddr() string {
-	return fmt.Sprintf("127.0.0.1:%d", f.ListenPort)
+	return net.Listen("tcp", f.ListenAddr)
 }

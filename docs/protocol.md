@@ -61,10 +61,10 @@ Returns the current resolved state of the environment.
   "services": {
     "api": {
       "ingresses": {
-        "default": {"host": "127.0.0.1", "port": 54321, "protocol": "http", "attributes": {}}
+        "default": {"hostport": "127.0.0.1:54321", "protocol": "http", "attributes": {}}
       },
       "egresses": {
-        "db": {"host": "127.0.0.1", "port": 54322, "protocol": "tcp", "attributes": {...}}
+        "db": {"hostport": "127.0.0.1:54322", "protocol": "tcp", "attributes": {...}}
       },
       "status": "ready"
     }
@@ -263,8 +263,7 @@ Resolved at runtime by the server. Never appears in the spec — only in events 
 
 ```json
 {
-  "host": "127.0.0.1",
-  "port": 54321,
+  "hostport": "127.0.0.1:54321",
   "protocol": "tcp",
   "attributes": {
     "PGHOST": "127.0.0.1",
@@ -278,8 +277,7 @@ Resolved at runtime by the server. Never appears in the spec — only in events 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `host` | string | Hostname or IP |
-| `port` | integer | Port number |
+| `hostport` | string | Host and port as `"host:port"` |
 | `protocol` | string | `"tcp"`, `"http"`, `"grpc"`, `"kafka"` |
 | `attributes` | object | Key-value attributes (typed as `any` — strings, numbers, booleans). Attributes sent to clients are fully resolved; internally attributes may contain `${VAR}` template references. |
 
@@ -289,9 +287,9 @@ Service type implementations store attribute values as templates referencing bui
 
 | Variable | Source | Example value |
 |----------|--------|---------------|
-| `HOST` | `ep.Host` | `127.0.0.1` |
-| `PORT` | `ep.Port` | `5432` |
-| `HOSTPORT` | `ep.Host:ep.Port` | `127.0.0.1:5432` |
+| `HOST` | `ep.Host()` | `127.0.0.1` |
+| `PORT` | `ep.Port()` | `5432` |
+| `HOSTPORT` | `ep.HostPort` | `127.0.0.1:5432` |
 
 Only these three built-in variables are available. Templates use `${VAR}` syntax and are resolved in a single pass. Referencing an unknown variable is an error.
 
@@ -419,8 +417,8 @@ The callback protocol enables client-side code execution (hooks and Func service
     "name": "seed_data",
     "type": "hook",
     "wiring": {
-      "ingresses": {"default": {"host": "127.0.0.1", "port": 54321, "protocol": "http"}},
-      "egresses": {"db": {"host": "127.0.0.1", "port": 54322, "protocol": "tcp", "attributes": {...}}},
+      "ingresses": {"default": {"hostport": "127.0.0.1:54321", "protocol": "http"}},
+      "egresses": {"db": {"hostport": "127.0.0.1:54322", "protocol": "tcp", "attributes": {...}}},
       "temp_dir": "/tmp/rig/a1b2c3/api",
       "env_dir": "/tmp/rig/a1b2c3"
     }

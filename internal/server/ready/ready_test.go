@@ -20,13 +20,13 @@ func TestTCPCheck_Success(t *testing.T) {
 	}
 	defer ln.Close()
 
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 	checker := &ready.TCP{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	if err := checker.Check(ctx, "127.0.0.1", port); err != nil {
+	if err := checker.Check(ctx, addr); err != nil {
 		t.Errorf("expected success, got: %v", err)
 	}
 }
@@ -38,7 +38,7 @@ func TestTCPCheck_Failure(t *testing.T) {
 	defer cancel()
 
 	// Port 1 is almost certainly not listening.
-	err := checker.Check(ctx, "127.0.0.1", 1)
+	err := checker.Check(ctx, "127.0.0.1:1")
 	if err == nil {
 		t.Error("expected error for closed port")
 	}
@@ -54,7 +54,7 @@ func TestHTTPCheck_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -65,7 +65,7 @@ func TestHTTPCheck_Success(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	if err := checker.Check(ctx, "127.0.0.1", port); err != nil {
+	if err := checker.Check(ctx, addr); err != nil {
 		t.Errorf("expected success, got: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestHTTPCheck_ServerError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -91,7 +91,7 @@ func TestHTTPCheck_ServerError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	err = checker.Check(ctx, "127.0.0.1", port)
+	err = checker.Check(ctx, addr)
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}
@@ -104,12 +104,12 @@ func TestPoll_Success(t *testing.T) {
 	}
 	defer ln.Close()
 
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil, nil)
+	err = ready.Poll(ctx, addr, &ready.TCP{}, nil, nil)
 	if err != nil {
 		t.Errorf("expected success, got: %v", err)
 	}
@@ -121,14 +121,14 @@ func TestPoll_Timeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 	ln.Close() // Close immediately so nothing is listening.
 
 	shortTimeout := spec.Duration{Duration: 100 * time.Millisecond}
 	rs := &spec.ReadySpec{Timeout: shortTimeout}
 
 	ctx := context.Background()
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, rs, nil)
+	err = ready.Poll(ctx, addr, &ready.TCP{}, rs, nil)
 	if err == nil {
 		t.Error("expected timeout error")
 	}
@@ -144,7 +144,7 @@ func TestPoll_OnFailureCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 	ln.Close()
 
 	shortTimeout := spec.Duration{Duration: 100 * time.Millisecond}
@@ -155,7 +155,7 @@ func TestPoll_OnFailureCallback(t *testing.T) {
 		failures = append(failures, err)
 	}
 
-	ready.Poll(context.Background(), "127.0.0.1", port, &ready.TCP{}, rs, onFailure)
+	ready.Poll(context.Background(), addr, &ready.TCP{}, rs, onFailure)
 	if len(failures) == 0 {
 		t.Error("expected onFailure to be called at least once")
 	}
@@ -168,6 +168,7 @@ func TestPoll_DelayedReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
+	addr := ln.Addr().String()
 	ln.Close() // Close first.
 
 	// Re-open after 100ms.
@@ -191,7 +192,7 @@ func TestPoll_DelayedReady(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = ready.Poll(ctx, "127.0.0.1", port, &ready.TCP{}, nil, nil)
+	err = ready.Poll(ctx, addr, &ready.TCP{}, nil, nil)
 	if err != nil {
 		t.Errorf("expected eventual success, got: %v", err)
 	}

@@ -30,8 +30,7 @@ func TestProtocolValid(t *testing.T) {
 
 func TestEndpointRoundTrip(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     5432,
+		HostPort: "127.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGHOST":     "127.0.0.1",
@@ -50,7 +49,7 @@ func TestEndpointRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Host != ep.Host || got.Port != ep.Port || got.Protocol != ep.Protocol {
+	if got.HostPort != ep.HostPort || got.Protocol != ep.Protocol {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", got, ep)
 	}
 	if got.Attributes["PGDATABASE"] != "testdb" {
@@ -60,8 +59,7 @@ func TestEndpointRoundTrip(t *testing.T) {
 
 func TestEndpointOmitsEmptyAttributes(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "127.0.0.1",
-		Port:     8080,
+		HostPort: "127.0.0.1:8080",
 		Protocol: spec.HTTP,
 	}
 
@@ -316,15 +314,13 @@ func TestResolvedEnvironmentRoundTrip(t *testing.T) {
 			"my-api": {
 				Ingresses: map[string]spec.ResolvedEndpoint{
 					"default": {
-						Host:     "127.0.0.1",
-						Port:     8080,
+						HostPort: "127.0.0.1:8080",
 						Protocol: spec.HTTP,
 					},
 				},
 				Egresses: map[string]spec.ResolvedEndpoint{
 					"database": {
-						Host:     "127.0.0.1",
-						Port:     54321,
+						HostPort: "127.0.0.1:54321",
 						Protocol: spec.TCP,
 						Attributes: map[string]any{
 							"PGDATABASE": "testdb",
@@ -354,8 +350,8 @@ func TestResolvedEnvironmentRoundTrip(t *testing.T) {
 	if svc.Status != spec.StatusReady {
 		t.Errorf("status: got %q", svc.Status)
 	}
-	if svc.Ingresses["default"].Port != 8080 {
-		t.Errorf("ingress port: got %d", svc.Ingresses["default"].Port)
+	if svc.Ingresses["default"].Port() != 8080 {
+		t.Errorf("ingress port: got %d", svc.Ingresses["default"].Port())
 	}
 	if svc.Egresses["database"].Attributes["PGDATABASE"] != "testdb" {
 		t.Error("egress attributes lost in round-trip")
@@ -364,8 +360,7 @@ func TestResolvedEnvironmentRoundTrip(t *testing.T) {
 
 func TestResolveAttributes_Basic(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGHOST":     "${HOST}",
@@ -396,8 +391,7 @@ func TestResolveAttributes_Basic(t *testing.T) {
 
 func TestResolveAttributes_CompoundBuiltins(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGHOST":       "${HOST}",
@@ -421,8 +415,7 @@ func TestResolveAttributes_CompoundBuiltins(t *testing.T) {
 
 func TestResolveAttributes_NonBuiltinReturnsError(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGHOST":       "${HOST}",
@@ -440,8 +433,7 @@ func TestResolveAttributes_NonBuiltinReturnsError(t *testing.T) {
 
 func TestResolveAttributes_NilAttributes(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 	}
 	got, err := spec.ResolveAttributes(ep)
@@ -455,8 +447,7 @@ func TestResolveAttributes_NilAttributes(t *testing.T) {
 
 func TestResolveAttributes_EmptyAttributes(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:       "10.0.0.1",
-		Port:       5432,
+		HostPort:   "10.0.0.1:5432",
 		Protocol:   spec.TCP,
 		Attributes: map[string]any{},
 	}
@@ -471,8 +462,7 @@ func TestResolveAttributes_EmptyAttributes(t *testing.T) {
 
 func TestResolveAttributes_NoTemplates(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGDATABASE": "mydb",
@@ -493,8 +483,7 @@ func TestResolveAttributes_NoTemplates(t *testing.T) {
 
 func TestResolveAttributes_DoesNotMutateSource(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"PGHOST": "${HOST}",
@@ -510,8 +499,7 @@ func TestResolveAttributes_DoesNotMutateSource(t *testing.T) {
 
 func TestResolveAttributes_UnknownVarReturnsError(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"ADDR": "${HOOST}/foo",
@@ -528,8 +516,7 @@ func TestResolveAttributes_UnknownVarReturnsError(t *testing.T) {
 
 func TestResolveAttributes_NonStringValue(t *testing.T) {
 	ep := spec.Endpoint{
-		Host:     "10.0.0.1",
-		Port:     5432,
+		HostPort: "10.0.0.1:5432",
 		Protocol: spec.TCP,
 		Attributes: map[string]any{
 			"MAX_CONNS": 100,
