@@ -95,15 +95,18 @@ func phaseFromEvents(serviceName string, events []Event) string {
 // current phase. For services stuck in early phases (pending/published), it
 // checks their egress targets to populate WaitingOn.
 func buildDiagnosticSnapshot(events []Event, services map[string]spec.Service, stalledFor time.Duration) DiagnosticSnapshot {
-	// Build phase map for all services.
+	// Build phase map for real (non-injected) services only.
 	phases := make(map[string]string, len(services))
-	for name := range services {
+	for name, svc := range services {
+		if svc.Injected {
+			continue
+		}
 		phases[name] = phaseFromEvents(name, events)
 	}
 
 	// Build snapshot — skip services that are already ready/stopped/failed.
 	var snapshots []ServiceSnapshot
-	names := sortedServiceNames(services)
+	names := realSortedServiceNames(services)
 	for _, name := range names {
 		phase := phases[name]
 		if phase == "ready" || phase == "failed" || phase == "stopped" || phase == "stopping" {

@@ -20,7 +20,7 @@ type Forwarder struct {
 	Ingress    string        // target ingress name
 	Protocol   string        // from spec: "http", "tcp", etc.
 	Emit       func(Event)   // publish to event log
-	Decoder    *grpcDecoder  // set once before traffic flows; nil if reflection unavailable
+	Decoder    *GRPCDecoder  // set once before traffic flows; nil if reflection unavailable
 	Listener   net.Listener // pre-opened listener; avoids TOCTOU race when set
 }
 

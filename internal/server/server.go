@@ -195,45 +195,6 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	s.idle.EnvironmentCreated()
 
 	go func() {
-		// Watch for all services becoming ready then emit environment.up.
-		// watchCtx is cancelled when the runner exits, preventing the watcher
-		// from blocking forever if some services never become ready.
-		watchCtx, watchCancel := context.WithCancel(ctx)
-		defer watchCancel()
-
-		go func() {
-			need := len(env.Services)
-			ch := envLog.Subscribe(watchCtx, 0, func(e Event) bool {
-				return e.Type == EventServiceReady
-			})
-			count := 0
-			for range ch {
-				count++
-				if count >= need {
-					resolved, err := buildResolvedEnvironment(inst)
-					if err != nil {
-						envLog.Publish(Event{
-							Type:        EventEnvironmentFailing,
-							Environment: env.Name,
-							Error:       fmt.Sprintf("resolve attributes: %s", err),
-						})
-						return
-					}
-					ingresses := make(map[string]map[string]spec.ResolvedEndpoint, len(resolved.Services))
-					for svcName, svc := range resolved.Services {
-						ingresses[svcName] = svc.Ingresses
-					}
-					envLog.Publish(Event{
-						Type:        EventEnvironmentUp,
-						Environment: env.Name,
-						Ingresses:   ingresses,
-						EnvDir:      envDir,
-					})
-					return
-				}
-			}
-		}()
-
 		err := runner.Run(ctx)
 
 		// Emit environment.down before signalling done so that SSE clients
@@ -452,16 +413,16 @@ func buildResolvedEnvironment(inst *envInstance) (spec.ResolvedEnvironment, erro
 	}
 
 	states := make(map[string]*svcState, len(inst.spec.Services))
-	for name := range inst.spec.Services {
+	for name, svc := range inst.spec.Services {
+		if svc.Injected {
+			continue // filter injected services from resolved output
+		}
 		states[name] = &svcState{
 			ingresses: make(map[string]spec.Endpoint),
 			egresses:  make(map[string]spec.Endpoint),
 			status:    spec.StatusPending,
 		}
 	}
-
-	// Track proxy endpoints separately; they override ingresses for env.Endpoint().
-	proxyEndpoints := make(map[string]map[string]spec.Endpoint) // service → ingress → proxy endpoint
 
 	for _, e := range events {
 		st, ok := states[e.Service]
@@ -472,13 +433,6 @@ func buildResolvedEnvironment(inst *envInstance) (spec.ResolvedEnvironment, erro
 		case EventIngressPublished:
 			if e.Endpoint != nil && e.Ingress != "" {
 				st.ingresses[e.Ingress] = *e.Endpoint
-			}
-		case EventProxyPublished:
-			if e.Endpoint != nil && e.Ingress != "" {
-				if proxyEndpoints[e.Service] == nil {
-					proxyEndpoints[e.Service] = make(map[string]spec.Endpoint)
-				}
-				proxyEndpoints[e.Service][e.Ingress] = *e.Endpoint
 			}
 		case EventServiceStarting:
 			st.status = spec.StatusStarting
@@ -497,25 +451,18 @@ func buildResolvedEnvironment(inst *envInstance) (spec.ResolvedEnvironment, erro
 		}
 	}
 
-	// Reconstruct egresses: for each service's egress spec, look up the
-	// ingress of the target service.
-	for name, svcSpec := range inst.spec.Services {
+	// Reconstruct egresses: for each real service's egress spec, look up the
+	// ingress of the target service (which may be an injected proxy node —
+	// follow through to find the real target's endpoint from events).
+	for name := range states {
 		st := states[name]
+		svcSpec := inst.spec.Services[name]
 		for egressName, egressSpec := range svcSpec.Egresses {
 			if target, ok := states[egressSpec.Service]; ok {
 				if ep, ok := target.ingresses[egressSpec.Ingress]; ok {
 					st.egresses[egressName] = ep
 				}
 			}
-		}
-	}
-
-	// When observing, replace ingress endpoints with proxy endpoints so
-	// env.Endpoint() returns the proxy address.
-	for svcName, proxyMap := range proxyEndpoints {
-		st := states[svcName]
-		for ingressName, proxyEP := range proxyMap {
-			st.ingresses[ingressName] = proxyEP
 		}
 	}
 
@@ -607,7 +554,7 @@ func buildDownSummary(log *EventLog) string {
 		case EventServiceLog, EventHealthCheckFailed,
 			EventCallbackRequest, EventCallbackResponse,
 			EventRequestCompleted, EventConnectionOpened, EventConnectionClosed,
-			EventGRPCCallCompleted, EventProxyPublished:
+			EventGRPCCallCompleted:
 			continue
 		}
 		elapsed := e.Timestamp.Sub(start).Seconds()
@@ -741,10 +688,14 @@ func (s *Server) writeEventLog(inst *envInstance) (jsonlFile, logFile string, er
 	// Derive outcome from events + client reason.
 	outcome := deriveOutcome(inst.reason, events)
 
-	// Collect service names from lifecycle events.
+	// Collect service names from lifecycle events, filtering injected nodes.
 	serviceSet := map[string]struct{}{}
 	for _, e := range events {
 		if e.Service != "" {
+			// Filter injected services (proxy nodes, ~test node).
+			if svc, ok := inst.spec.Services[e.Service]; ok && svc.Injected {
+				continue
+			}
 			serviceSet[e.Service] = struct{}{}
 		}
 	}
@@ -870,7 +821,7 @@ func (s *Server) writeEventLog(inst *envInstance) (jsonlFile, logFile string, er
 			s.grpcLatMs += g.LatencyMs
 			continue
 		}
-		if e.Type == EventConnectionOpened || e.Type == EventProxyPublished {
+		if e.Type == EventConnectionOpened {
 			// Skip noisy per-open events.
 			continue
 		}

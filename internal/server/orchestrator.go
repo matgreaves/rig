@@ -41,21 +41,24 @@ type Orchestrator struct {
 // cause before returning. The results map is safe to share because the
 // artifact phase completes before the service phase begins.
 func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, string, error) {
+	// Insert virtual service nodes before orchestration.
+	InsertTestNode(env)
+	TransformObserve(env)
+
 	// Generate instance ID.
 	instanceID := generateID()
 
-	// Create temp directories and register cleanup with onexit so they're
-	// removed even if rigd is killed ungracefully.
+	// Create temp directories only for real (non-injected) services.
 	envDir := filepath.Join(o.tempBase(), instanceID)
-	serviceNames := sortedServiceNames(env.Services)
-	if err := createTempDirs(envDir, serviceNames); err != nil {
+	realServiceNames := realSortedServiceNames(env.Services)
+	if err := createTempDirs(envDir, realServiceNames); err != nil {
 		return nil, "", "", fmt.Errorf("create temp dirs: %w", err)
 	}
 	cancelTempCleanup, _ := onexit.OnExitF("rm -rf %s", envDir)
 
-	// Collect artifacts from all ArtifactProvider service types.
+	// Collect artifacts from all ArtifactProvider service types (real services only).
 	var allArtifacts []artifact.Artifact
-	for _, name := range serviceNames {
+	for _, name := range realServiceNames {
 		svc := env.Services[name]
 		svcType, err := o.Registry.Get(svc.Type)
 		if err != nil {
@@ -119,6 +122,8 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 	// to populate the structured Service field on environment.failing.
 	var failedService string
 
+	allServiceNames := sortedServiceNames(env.Services)
+
 	servicePhase := run.Func(func(ctx context.Context) error {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -130,27 +135,46 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 			err  error
 		}
 
-		var wg sync.WaitGroup
-		errs := make(chan serviceErr, len(serviceNames))
+		// Collect no-ingress real service names for ~test to wait on.
+		var noIngressServices []string
+		for _, name := range allServiceNames {
+			svc := env.Services[name]
+			if !svc.Injected && len(svc.Ingresses) == 0 {
+				noIngressServices = append(noIngressServices, name)
+			}
+		}
 
-		for _, name := range serviceNames {
+		var wg sync.WaitGroup
+		errs := make(chan serviceErr, len(allServiceNames))
+
+		for _, name := range allServiceNames {
 			svc := env.Services[name]
 			svcType, err := o.Registry.Get(svc.Type)
 			if err != nil {
 				return fmt.Errorf("service %q: %w", name, err)
 			}
 
+			tempDir := filepath.Join(envDir, name)
+			if svc.Injected {
+				tempDir = ""
+			}
+
 			sc := &serviceContext{
 				name:       name,
 				spec:       svc,
 				svcType:    svcType,
-				tempDir:    filepath.Join(envDir, name),
+				tempDir:    tempDir,
 				envDir:     envDir,
 				log:        o.Log,
 				envName:    env.Name,
 				instanceID: instanceID,
 				artifacts:  results,
-				observe:    env.Observe,
+			}
+
+			// The ~test node needs to know about no-ingress services
+			// so emitEnvironmentUp can wait for them.
+			if name == "~test" {
+				sc.noIngressServices = noIngressServices
 			}
 
 			wg.Add(1)
@@ -247,6 +271,18 @@ func sortedServiceNames(services map[string]spec.Service) []string {
 	names := make([]string, 0, len(services))
 	for name := range services {
 		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// realSortedServiceNames returns sorted names of non-injected services.
+func realSortedServiceNames(services map[string]spec.Service) []string {
+	names := make([]string, 0, len(services))
+	for name, svc := range services {
+		if !svc.Injected {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names)
 	return names

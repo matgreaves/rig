@@ -62,7 +62,7 @@ type observingTransport struct {
 	source     string
 	target     string
 	ingress    string
-	getDecoder func() *grpcDecoder // returns decoder lazily; nil means no decoding
+	getDecoder func() *GRPCDecoder // returns decoder lazily; nil means no decoding
 }
 
 func (t *observingTransport) RoundTrip(req *http.Request) (*http.Response, error) {

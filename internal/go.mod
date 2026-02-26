@@ -7,6 +7,7 @@ require (
 	github.com/docker/go-connections v0.6.0
 	github.com/matgreaves/rig v0.0.0
 	github.com/matgreaves/run v0.0.0-20260218110328-eb38e0ac8e05
+	github.com/matryer/is v1.4.1
 	golang.org/x/net v0.49.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
