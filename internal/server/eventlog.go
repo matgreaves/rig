@@ -57,7 +57,6 @@ const (
 	EventRequestCompleted  EventType = "request.completed"
 	EventConnectionOpened  EventType = "connection.opened"
 	EventConnectionClosed  EventType = "connection.closed"
-	EventProxyPublished    EventType = "proxy.published"
 	EventGRPCCallCompleted EventType = "grpc.call.completed"
 )
 

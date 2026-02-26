@@ -75,6 +75,8 @@ func TestMain(m *testing.M) {
 	reg.Register("container", service.Container{})
 	reg.Register("postgres", service.Postgres{})
 	reg.Register("temporal", service.Temporal{})
+	reg.Register("proxy", service.NewProxy())
+	reg.Register("test", service.Test{})
 
 	rigDir := filepath.Join(dir, "..", ".rig")
 	tmpDir, err := os.MkdirTemp("", "rig-integration-")
@@ -796,39 +798,31 @@ func TestObserve(t *testing.T) {
 	}
 
 	// Count request.completed events by source.
-	externalToAPI := 0
-	externalToBackend := 0
+	// With proxy-as-service, the external proxy source is "~test" and
+	// the egress proxy source is the consuming service name.
+	testToAPI := 0
+	testToBackend := 0
 	for _, e := range events {
 		if e.Type != "request.completed" || e.Request == nil {
 			continue
 		}
-		if e.Request.Source == "external" && e.Request.Target == "api" {
-			externalToAPI++
+		if e.Request.Source == "~test" && e.Request.Target == "api" {
+			testToAPI++
 		}
-		if e.Request.Source == "external" && e.Request.Target == "backend" {
-			externalToBackend++
+		if e.Request.Source == "~test" && e.Request.Target == "backend" {
+			testToBackend++
 		}
 	}
 
 	// We made 3 requests to api + health check requests from ready polling.
 	// At minimum we should see our 3 explicit requests.
-	if externalToAPI < 3 {
-		t.Errorf("external→api requests: got %d, want >= 3", externalToAPI)
+	if testToAPI < 3 {
+		t.Errorf("~test→api requests: got %d, want >= 3", testToAPI)
 	}
-	if externalToBackend < 1 {
-		t.Errorf("external→backend requests: got %d, want >= 1", externalToBackend)
+	if testToBackend < 1 {
+		t.Errorf("~test→backend requests: got %d, want >= 1", testToBackend)
 	}
 
-	// Verify proxy.published events were emitted.
-	proxyPublished := 0
-	for _, e := range events {
-		if e.Type == "proxy.published" {
-			proxyPublished++
-		}
-	}
-	if proxyPublished < 2 {
-		t.Errorf("proxy.published events: got %d, want >= 2 (one per service ingress)", proxyPublished)
-	}
 }
 
 // TestObserveAttributes verifies that the observe proxy rewrites

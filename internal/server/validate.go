@@ -20,6 +20,8 @@ var KnownServiceTypes = map[string]bool{
 	"temporal":  true,
 	"redis":     true,
 	"custom":    true,
+	"proxy":     true,
+	"test":      true,
 }
 
 // ValidateEnvironment checks an environment spec for structural errors.

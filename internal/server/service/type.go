@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/matgreaves/rig/internal/server/artifact"
+	"github.com/matgreaves/rig/internal/server/proxy"
 	"github.com/matgreaves/rig/internal/server/ready"
 	"github.com/matgreaves/rig/internal/spec"
 	"github.com/matgreaves/run"
@@ -16,7 +17,8 @@ type PublishParams struct {
 	ServiceName string
 	Spec        spec.Service
 	Ingresses   map[string]spec.IngressSpec
-	Ports       map[string]int // ingress name → allocated port
+	Ports       map[string]int              // ingress name → allocated port
+	Egresses    map[string]spec.Endpoint    // resolved egresses (from wiring, may be nil for leaf services)
 }
 
 // StartParams provides the context needed for the start phase.
@@ -43,6 +45,10 @@ type StartParams struct {
 	// Callback dispatches a callback request to the client SDK and blocks
 	// until the response arrives. Nil for types that don't use callbacks.
 	Callback func(ctx context.Context, name, callbackType string) error
+
+	// ProxyEmit publishes a proxy event to the event log. Set for proxy
+	// service types; nil for all others.
+	ProxyEmit func(proxy.Event)
 }
 
 // ArtifactParams is passed to ArtifactProvider.Artifacts.

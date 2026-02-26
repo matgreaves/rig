@@ -327,8 +327,8 @@ Every event has this base structure:
 | `environment` | string | All events |
 | `timestamp` | RFC3339Nano | All events |
 | `service` | string | Service-scoped events |
-| `ingress` | string | `ingress.published`, `proxy.published` |
-| `endpoint` | Endpoint | `ingress.published`, `proxy.published` |
+| `ingress` | string | `ingress.published` |
+| `endpoint` | Endpoint | `ingress.published` |
 | `artifact` | string | Artifact events |
 | `error` | string | Failure events |
 | `log` | LogEntry | `service.log` |
@@ -395,7 +395,6 @@ Every event has this base structure:
 
 | Type | Description |
 |------|-------------|
-| `proxy.published` | Proxy endpoint allocated for an ingress. |
 | `request.completed` | HTTP request/response pair observed. |
 | `connection.opened` | TCP connection opened. |
 | `connection.closed` | TCP connection closed. |

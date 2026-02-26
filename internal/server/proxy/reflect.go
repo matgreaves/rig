@@ -19,9 +19,9 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// grpcDecoder decodes gRPC request/response bodies into JSON using
+// GRPCDecoder decodes gRPC request/response bodies into JSON using
 // descriptors obtained via server reflection.
-type grpcDecoder struct {
+type GRPCDecoder struct {
 	methods map[string]methodDesc // key: "pkg.Service/Method"
 }
 
@@ -33,7 +33,7 @@ type methodDesc struct {
 // ProbeReflection dials the target gRPC server and attempts to fetch service
 // descriptors via the v1 reflection API. Returns nil if reflection is not
 // available or any error occurs. The caller should treat nil as "no decoder".
-func ProbeReflection(ctx context.Context, addr string) *grpcDecoder {
+func ProbeReflection(ctx context.Context, addr string) *GRPCDecoder {
 	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
@@ -106,7 +106,7 @@ func ProbeReflection(ctx context.Context, addr string) *grpcDecoder {
 		return nil
 	}
 
-	return &grpcDecoder{methods: methods}
+	return &GRPCDecoder{methods: methods}
 }
 
 // fetchFileDescriptors fetches the file descriptor for a service (by symbol)
@@ -178,7 +178,7 @@ func fetchDescriptors(
 // Decode decodes a gRPC framed body (length-prefixed protobuf) into JSON.
 // svc is "pkg.Service", method is "Method". isRequest selects which descriptor
 // (input or output) to use. Returns "" on any failure.
-func (d *grpcDecoder) Decode(svc, method string, framedData []byte, isRequest bool) string {
+func (d *GRPCDecoder) Decode(svc, method string, framedData []byte, isRequest bool) string {
 	key := svc + "/" + method
 	md, ok := d.methods[key]
 	if !ok {

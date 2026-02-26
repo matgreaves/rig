@@ -135,7 +135,7 @@ func TestGRPCDecoderDecode(t *testing.T) {
 		return true
 	})
 
-	decoder := &grpcDecoder{methods: methods}
+	decoder := &GRPCDecoder{methods: methods}
 
 	// Build a framed request: Req{name: "world"}
 	reqMsg := dynamicpb.NewMessage(methods["test.Greeter/Hello"].input)

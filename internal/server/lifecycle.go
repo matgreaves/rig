@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/matgreaves/rig/internal/server/artifact"
@@ -21,19 +22,18 @@ import (
 
 // serviceContext holds the resolved state for a single service during its lifecycle.
 type serviceContext struct {
-	name       string
-	spec       spec.Service
-	svcType    service.Type
-	ingresses  map[string]spec.Endpoint   // populated after publish
-	egresses   map[string]spec.Endpoint   // populated after wiring
-	artifacts  map[string]artifact.Output // populated by artifact phase (shared, read-only during service phase)
-	tempDir    string
-	envDir     string
-	log        *EventLog
-	envName    string
-	instanceID string
-	observe    bool               // when true, create proxy forwarders
-	forwarders []*proxy.Forwarder // populated during publish/wiring when observing
+	name              string
+	spec              spec.Service
+	svcType           service.Type
+	ingresses         map[string]spec.Endpoint   // populated after publish
+	egresses          map[string]spec.Endpoint   // populated after wiring
+	artifacts         map[string]artifact.Output // populated by artifact phase (shared, read-only during service phase)
+	tempDir           string
+	envDir            string
+	log               *EventLog
+	envName           string
+	instanceID        string
+	noIngressServices []string // real services with no ingresses (~test waits for these)
 }
 
 // serviceLifecycle builds the full lifecycle sequence for a single service.
@@ -54,8 +54,8 @@ type serviceContext struct {
 // The lifecycle ends with Idle so the Group stays alive until teardown.
 func serviceLifecycle(sc *serviceContext, ports *PortAllocator) run.Runner {
 	inner := run.Sequence{
+		waitForEgressesStep(sc),
 		publishStep(sc, ports),
-		waitForEgressesStep(sc, ports),
 		prestartStep(sc),
 		runWithLifecycle(sc),
 	}
@@ -134,6 +134,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			Spec:        sc.spec,
 			Ingresses:   sc.spec.Ingresses,
 			Ports:       portMap,
+			Egresses:    sc.egresses,
 		})
 		if err != nil {
 			return fmt.Errorf("publish: %w", err)
@@ -152,46 +153,12 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 			})
 		}
 
-		// When observing, create one external proxy per ingress so that
-		// env.Endpoint() returns a proxy address instead of the real one.
-		if sc.observe {
-			proxyListeners, err := ports.Allocate(sc.instanceID, len(endpoints))
-			if err != nil {
-				return fmt.Errorf("allocate external proxy ports: %w", err)
-			}
-			i := 0
-			for ingressName, ep := range endpoints {
-				ln := proxyListeners[i]
-				fwd := &proxy.Forwarder{
-					ListenPort: ln.Addr().(*net.TCPAddr).Port,
-					Target:     ep,
-					Source:     "external",
-					TargetSvc:  sc.name,
-					Ingress:    ingressName,
-					Protocol:   string(ep.Protocol),
-					Emit:       proxyEmitter(sc),
-					Listener:   ln,
-				}
-				sc.forwarders = append(sc.forwarders, fwd)
-
-				proxyEP := fwd.Endpoint()
-				sc.log.Publish(Event{
-					Type:        EventProxyPublished,
-					Environment: sc.envName,
-					Service:     sc.name,
-					Ingress:     ingressName,
-					Endpoint:    &proxyEP,
-				})
-				i++
-			}
-		}
-
 		return nil
 	})
 }
 
 // waitForEgressesStep blocks until every egress target is READY.
-func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
+func waitForEgressesStep(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
 		if len(sc.spec.Egresses) == 0 {
 			return nil
@@ -226,31 +193,7 @@ func waitForEgressesStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 					egressName, err)
 			}
 
-			realEndpoint := *ev.Endpoint
-
-			if sc.observe {
-				// Create an egress proxy so the service talks through the proxy.
-				proxyListeners, err := ports.Allocate(sc.instanceID, 1)
-				if err != nil {
-					return fmt.Errorf("allocate egress proxy port for %q: %w",
-						egressName, err)
-				}
-				ln := proxyListeners[0]
-				fwd := &proxy.Forwarder{
-					ListenPort: ln.Addr().(*net.TCPAddr).Port,
-					Target:     realEndpoint,
-					Source:     sc.name,
-					TargetSvc:  targetService,
-					Ingress:    targetIngress,
-					Protocol:   string(realEndpoint.Protocol),
-					Emit:       proxyEmitter(sc),
-					Listener:   ln,
-				}
-				sc.forwarders = append(sc.forwarders, fwd)
-				sc.egresses[egressName] = fwd.Endpoint()
-			} else {
-				sc.egresses[egressName] = realEndpoint
-			}
+			sc.egresses[egressName] = *ev.Endpoint
 		}
 
 		sc.log.Publish(Event{
@@ -326,15 +269,16 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Callback: func(ctx context.Context, name, callbackType string) error {
 				return dispatchCallback(ctx, sc, name, callbackType)
 			},
+			ProxyEmit: proxyEmitter(sc),
 		})
 
 		// Build the lifecycle continuation that runs alongside the service.
 		lifecycle := run.Sequence{
 			readyCheckRunner(sc),
 			emitEvent(sc, EventServiceHealthy),
-			reflectionProbeStep(sc),
 			initRunner(sc),
 			emitEvent(sc, EventServiceReady),
+			emitEnvironmentUp(sc),
 			run.Idle,
 		}
 
@@ -342,11 +286,6 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 		group := run.Group{
 			"runner":    runner,
 			"lifecycle": lifecycle,
-		}
-
-		// Start proxy forwarders alongside the service.
-		for i, fwd := range sc.forwarders {
-			group[fmt.Sprintf("proxy-%d", i)] = fwd.Runner()
 		}
 
 		return group.Run(ctx)
@@ -397,25 +336,6 @@ func readyCheckRunner(sc *serviceContext) run.Runner {
 	})
 }
 
-// reflectionProbeStep probes gRPC forwarders for server reflection support.
-// Called after the service is healthy so the probe gets an immediate answer.
-// Sets fwd.Decoder for any forwarder whose target supports reflection.
-func reflectionProbeStep(sc *serviceContext) run.Runner {
-	return run.Func(func(ctx context.Context) error {
-		if !sc.observe {
-			return nil
-		}
-		for _, fwd := range sc.forwarders {
-			if fwd.Protocol != "grpc" {
-				continue
-			}
-			addr := fmt.Sprintf("%s:%d", fwd.Target.Host, fwd.Target.Port)
-			fwd.Decoder = proxy.ProbeReflection(ctx, addr)
-		}
-		return nil
-	})
-}
-
 // initRunner runs the init hooks if configured.
 func initRunner(sc *serviceContext) run.Runner {
 	return run.Func(func(ctx context.Context) error {
@@ -445,6 +365,78 @@ func emitEvent(sc *serviceContext, eventType EventType) run.Runner {
 			Type:        eventType,
 			Environment: sc.envName,
 			Service:     sc.name,
+		})
+		return nil
+	})
+}
+
+// emitEnvironmentUp returns a Runner that emits EventEnvironmentUp when the
+// ~test node reaches ready. For all other services, this is a no-op.
+//
+// The ~test node's egresses map back to real services via naming convention:
+//   - egress "api" → ingresses["api"]["default"]
+//   - egress "temporal~ui" → ingresses["temporal"]["ui"]
+//
+// It also waits for any no-ingress real services (workers) that aren't
+// captured by egresses, since those still need to be ready before the
+// environment is considered up.
+func emitEnvironmentUp(sc *serviceContext) run.Runner {
+	return run.Func(func(ctx context.Context) error {
+		if sc.spec.Type != "test" || !sc.spec.Injected {
+			return nil
+		}
+
+		// Wait for no-ingress services that aren't in our egress set.
+		// These are real services with no ingresses that ~test can't
+		// depend on via egresses (egresses require a target ingress).
+		if sc.noIngressServices != nil {
+			for _, svcName := range sc.noIngressServices {
+				_, err := sc.log.WaitFor(ctx, func(e Event) bool {
+					return e.Type == EventServiceReady &&
+						e.Environment == sc.envName &&
+						e.Service == svcName
+				})
+				if err != nil {
+					return fmt.Errorf("waiting for no-ingress service %q: %w", svcName, err)
+				}
+			}
+		}
+
+		// Build the ingresses map from resolved egresses.
+		ingresses := make(map[string]map[string]spec.ResolvedEndpoint)
+		for egressName, ep := range sc.egresses {
+			re, err := ep.Resolve()
+			if err != nil {
+				return fmt.Errorf("resolve egress %q: %w", egressName, err)
+			}
+
+			// Parse egress name back to service/ingress.
+			svcName := egressName
+			ingressName := "default"
+			if idx := strings.Index(egressName, "~"); idx >= 0 {
+				svcName = egressName[:idx]
+				ingressName = egressName[idx+1:]
+			}
+
+			if ingresses[svcName] == nil {
+				ingresses[svcName] = make(map[string]spec.ResolvedEndpoint)
+			}
+			ingresses[svcName][ingressName] = re
+		}
+
+		// Include no-ingress services (workers) with empty ingress maps
+		// so they appear in env.Services on the client side.
+		for _, svcName := range sc.noIngressServices {
+			if ingresses[svcName] == nil {
+				ingresses[svcName] = make(map[string]spec.ResolvedEndpoint)
+			}
+		}
+
+		sc.log.Publish(Event{
+			Type:        EventEnvironmentUp,
+			Environment: sc.envName,
+			Ingresses:   ingresses,
+			EnvDir:      sc.envDir,
 		})
 		return nil
 	})

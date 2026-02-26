@@ -24,6 +24,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("container", service.Container{})
+	reg.Register("proxy", service.NewProxy())
+	reg.Register("test", service.Test{})
 
 	s := server.NewServer(
 		server.NewPortAllocator(),

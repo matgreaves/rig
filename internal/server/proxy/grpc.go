@@ -34,7 +34,7 @@ func (f *Forwarder) runGRPC(ctx context.Context) error {
 		source:     f.Source,
 		target:     f.TargetSvc,
 		ingress:    f.Ingress,
-		getDecoder: func() *grpcDecoder { return f.Decoder },
+		getDecoder: func() *GRPCDecoder { return f.Decoder },
 	}
 
 	ln, err := f.getListener()

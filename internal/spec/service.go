@@ -24,6 +24,11 @@ type Service struct {
 
 	// Hooks defines lifecycle hooks for this service.
 	Hooks *Hooks `json:"hooks,omitempty"`
+
+	// Injected is true for virtual service nodes inserted by spec
+	// transformation (proxy nodes, ~test node). These are filtered from
+	// user-facing output, temp dirs, and artifact collection.
+	Injected bool `json:"injected,omitempty"`
 }
 
 // Hooks holds the optional prestart and init hooks for a service.
