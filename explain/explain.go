@@ -312,26 +312,32 @@ func Analyze(r io.Reader) (*Report, error) {
 		return nil, fmt.Errorf("read events: %w", err)
 	}
 
-	// If environment.up fired, drop all pre-up traffic (startup probes).
-	// If it never fired (crash), keep pre-up traffic but filter out errors
-	// targeting services that eventually became healthy — those are just
-	// transient startup probe failures, not real errors.
-	if envUp && envUpIndex > 0 {
-		trafficErrors = trafficErrors[envUpIndex:]
-	} else if !envUp && len(healthyServices) > 0 {
-		filtered := trafficErrors[:0]
-		for _, te := range trafficErrors {
-			if !healthyServices[te.Target] {
-				filtered = append(filtered, te)
+	// If the test passed, all non-2xx responses were expected behavior
+	// (e.g. testing that GET /users/1 returns 404). Don't report them.
+	if report.Outcome == "passed" {
+		trafficErrors = nil
+	} else {
+		// If environment.up fired, drop all pre-up traffic (startup probes).
+		// If it never fired (crash), keep pre-up traffic but filter out errors
+		// targeting services that eventually became healthy — those are just
+		// transient startup probe failures, not real errors.
+		if envUp && envUpIndex > 0 {
+			trafficErrors = trafficErrors[envUpIndex:]
+		} else if !envUp && len(healthyServices) > 0 {
+			filtered := trafficErrors[:0]
+			for _, te := range trafficErrors {
+				if !healthyServices[te.Target] {
+					filtered = append(filtered, te)
+				}
 			}
+			trafficErrors = filtered
 		}
-		trafficErrors = filtered
-	}
 
-	// Reverse traffic errors: most recent first. The last error before the
-	// test assertion is usually the one that caused it.
-	for i, j := 0, len(trafficErrors)-1; i < j; i, j = i+1, j-1 {
-		trafficErrors[i], trafficErrors[j] = trafficErrors[j], trafficErrors[i]
+		// Reverse traffic errors: most recent first. The last error before the
+		// test assertion is usually the one that caused it.
+		for i, j := 0, len(trafficErrors)-1; i < j; i, j = i+1, j-1 {
+			trafficErrors[i], trafficErrors[j] = trafficErrors[j], trafficErrors[i]
+		}
 	}
 
 	report.Assertions = assertions
