@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/matgreaves/rig/connect"
-	"github.com/matgreaves/rig/explain"
 )
 
 // Re-export shared types from connect/ so users of the SDK never need to
@@ -247,10 +246,8 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 		result := destroyEnvironment(o.serverURL, envID, preserve, t.Failed())
 		// Explain summary first — the diagnosis is what you want to see
 		// immediately. File paths and CLI commands are reference material.
-		if t.Failed() && result.LogFile != "" {
-			if summary := explain.CondensedFile(result.LogFile); summary != "" {
-				t.Log(summary)
-			}
+		if t.Failed() && result.Summary != "" {
+			t.Log(result.Summary)
 		}
 		if t.Failed() && envDir != "" {
 			if preserve {
@@ -303,6 +300,7 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 type destroyResult struct {
 	LogFile       string // structured JSONL event log
 	LogFilePretty string // human-readable timeline summary
+	Summary       string // condensed failure diagnosis from server
 }
 
 // destroyEnvironment sends DELETE /environments/{id}?log=true. Blocks until
@@ -329,10 +327,12 @@ func destroyEnvironment(serverURL, envID string, preserve bool, failed bool) des
 	var result struct {
 		LogFile       string `json:"log_file"`
 		LogFilePretty string `json:"log_file_pretty"`
+		Summary       string `json:"summary"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	return destroyResult{
 		LogFile:       result.LogFile,
 		LogFilePretty: result.LogFilePretty,
+		Summary:       result.Summary,
 	}
 }
