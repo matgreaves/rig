@@ -29,6 +29,11 @@ func main() {
 			}
 			os.Exit(1)
 		}
+	case "explain":
+		if err := runExplain(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rig explain: %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -45,6 +50,7 @@ Commands:
   traffic <file>         Inspect traffic captured by rigd
   logs    <file>         View service logs
   ls      [pattern]      List recent log files
+  explain <file>         Analyze failure from event log
 
 Run 'rig <command> --help' for command-specific flags.
 `)

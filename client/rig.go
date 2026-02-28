@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/matgreaves/rig/connect"
+	"github.com/matgreaves/rig/explain"
 )
 
 // Re-export shared types from connect/ so users of the SDK never need to
@@ -244,6 +245,13 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 		preserve := os.Getenv("RIG_PRESERVE") == "true" ||
 			(t.Failed() && os.Getenv("RIG_PRESERVE_ON_FAILURE") == "true")
 		result := destroyEnvironment(o.serverURL, envID, preserve, t.Failed())
+		// Explain summary first — the diagnosis is what you want to see
+		// immediately. File paths and CLI commands are reference material.
+		if t.Failed() && result.LogFile != "" {
+			if summary := explain.CondensedFile(result.LogFile); summary != "" {
+				t.Log(summary)
+			}
+		}
 		if t.Failed() && envDir != "" {
 			if preserve {
 				t.Logf("rig: environment dir (preserved): %s", envDir)

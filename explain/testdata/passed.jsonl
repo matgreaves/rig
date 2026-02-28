@@ -1,0 +1,28 @@
+{"type":"log.header","environment":"TestGenerate/passed","outcome":"passed","services":["api"],"duration_ms":14,"timestamp":"2026-02-28T20:37:53.455417+11:00"}
+{"seq":1,"type":"ingress.published","environment":"TestGenerate/passed","service":"api","ingress":"default","endpoint":{"hostport":"127.0.0.1:24264","protocol":"http"},"timestamp":"2026-02-28T20:37:53.440141+11:00"}
+{"seq":2,"type":"service.starting","environment":"TestGenerate/passed","service":"api","timestamp":"2026-02-28T20:37:53.44015+11:00"}
+{"seq":3,"type":"callback.request","environment":"TestGenerate/passed","service":"api","callback":{"request_id":"19ca39c931f-8868f108-api-_start_3","name":"_start_3","type":"start","wiring":{"ingresses":{"default":{"hostport":"127.0.0.1:24264","protocol":"http"}},"temp_dir":"/Users/mat/code/github.com/matgreaves/rig/.rig/tmp/19ca39c931f-8868f108/api","env_dir":"/Users/mat/code/github.com/matgreaves/rig/.rig/tmp/19ca39c931f-8868f108"}},"timestamp":"2026-02-28T20:37:53.4402+11:00"}
+{"seq":4,"type":"health.check_failed","environment":"TestGenerate/passed","service":"api","ingress":"default","error":"Get \"http://127.0.0.1:24264/\": dial tcp 127.0.0.1:24264: connect: connection refused","timestamp":"2026-02-28T20:37:53.440534+11:00"}
+{"seq":5,"type":"callback.response","environment":"TestGenerate/passed","service":"api","result":{"request_id":"19ca39c931f-8868f108-api-_start_3"},"timestamp":"2026-02-28T20:37:53.440983+11:00"}
+{"seq":6,"type":"service.healthy","environment":"TestGenerate/passed","service":"api","timestamp":"2026-02-28T20:37:53.452124+11:00"}
+{"seq":7,"type":"service.ready","environment":"TestGenerate/passed","service":"api","timestamp":"2026-02-28T20:37:53.452131+11:00"}
+{"seq":8,"type":"wiring.resolved","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.452133+11:00"}
+{"seq":9,"type":"ingress.published","environment":"TestGenerate/passed","service":"api~proxy~~test","ingress":"default","endpoint":{"hostport":"127.0.0.1:26843","protocol":"http"},"timestamp":"2026-02-28T20:37:53.452192+11:00"}
+{"seq":10,"type":"service.starting","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.452202+11:00"}
+{"seq":11,"type":"request.completed","environment":"TestGenerate/passed","request":{"source":"~test","target":"api","ingress":"default","method":"GET","path":"/","status_code":404,"latency_ms":0.382,"request_size":0,"response_size":19,"request_headers":{"Accept-Encoding":["gzip"],"User-Agent":["Go-http-client/1.1"],"X-Forwarded-For":["127.0.0.1"]},"response_headers":{"Content-Length":["19"],"Content-Type":["text/plain; charset=utf-8"],"Date":["Sat, 28 Feb 2026 09:37:53 GMT"],"X-Content-Type-Options":["nosniff"]},"response_body":"NDA0IHBhZ2Ugbm90IGZvdW5kCg=="},"timestamp":"2026-02-28T20:37:53.452989+11:00"}
+{"seq":12,"type":"service.healthy","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.453082+11:00"}
+{"seq":13,"type":"service.ready","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.453084+11:00"}
+{"seq":14,"type":"wiring.resolved","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.453091+11:00"}
+{"seq":15,"type":"service.starting","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.453091+11:00"}
+{"seq":16,"type":"service.healthy","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.453107+11:00"}
+{"seq":17,"type":"service.ready","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.453108+11:00"}
+{"seq":18,"type":"environment.up","environment":"TestGenerate/passed","env_dir":"/Users/mat/code/github.com/matgreaves/rig/.rig/tmp/19ca39c931f-8868f108","ingresses":{"api":{"default":{"hostport":"127.0.0.1:26843","protocol":"http"}}},"timestamp":"2026-02-28T20:37:53.45311+11:00"}
+{"seq":19,"type":"request.completed","environment":"TestGenerate/passed","request":{"source":"~test","target":"api","ingress":"default","method":"GET","path":"/hello","status_code":200,"latency_ms":0.22,"request_size":0,"response_size":19,"request_headers":{"Accept-Encoding":["gzip"],"User-Agent":["Go-http-client/1.1"],"X-Forwarded-For":["127.0.0.1"]},"response_headers":{"Content-Length":["19"],"Content-Type":["application/json"],"Date":["Sat, 28 Feb 2026 09:37:53 GMT"]},"response_body":"eyJtZXNzYWdlIjoiaGVsbG8ifQ=="},"timestamp":"2026-02-28T20:37:53.45399+11:00"}
+{"seq":20,"type":"environment.destroying","environment":"TestGenerate/passed","timestamp":"2026-02-28T20:37:53.454248+11:00"}
+{"seq":21,"type":"service.stopping","environment":"TestGenerate/passed","service":"api","timestamp":"2026-02-28T20:37:53.454268+11:00"}
+{"seq":22,"type":"service.stopped","environment":"TestGenerate/passed","service":"api","timestamp":"2026-02-28T20:37:53.454269+11:00"}
+{"seq":23,"type":"service.stopping","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.454303+11:00"}
+{"seq":24,"type":"service.stopped","environment":"TestGenerate/passed","service":"api~proxy~~test","timestamp":"2026-02-28T20:37:53.454303+11:00"}
+{"seq":25,"type":"service.stopping","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.454305+11:00"}
+{"seq":26,"type":"service.stopped","environment":"TestGenerate/passed","service":"~test","timestamp":"2026-02-28T20:37:53.454305+11:00"}
+{"seq":27,"type":"environment.down","environment":"TestGenerate/passed","timestamp":"2026-02-28T20:37:53.454777+11:00"}
