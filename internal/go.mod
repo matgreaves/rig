@@ -6,6 +6,7 @@ require (
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/docker/go-connections v0.6.0
 	github.com/matgreaves/rig v0.0.0
+	github.com/matgreaves/rig/explain v0.0.0
 	github.com/matgreaves/run v0.0.0-20260218110328-eb38e0ac8e05
 	github.com/matryer/is v1.4.1
 	golang.org/x/net v0.49.0
@@ -43,4 +44,7 @@ require (
 	gotest.tools/v3 v3.5.2 // indirect
 )
 
-replace github.com/matgreaves/rig => ../
+replace (
+	github.com/matgreaves/rig => ../
+	github.com/matgreaves/rig/explain => ../explain
+)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matgreaves/rig/explain"
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/service"
 	"github.com/matgreaves/rig/internal/spec"
@@ -380,6 +381,9 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		if jsonlPath, logPath, err := s.writeEventLog(inst); err == nil {
 			result["log_file"] = jsonlPath
 			result["log_file_pretty"] = logPath
+			if summary := explain.CondensedFile(jsonlPath); summary != "" {
+				result["summary"] = summary
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
