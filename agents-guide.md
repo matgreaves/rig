@@ -137,7 +137,29 @@ By default, rig proxies every service edge and captures all HTTP requests, gRPC 
 
 ## Debugging test failures
 
-Each test that calls `rig.Up` produces a `.jsonl` log in `{RIG_DIR}/logs/`. Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`.
+Each test that calls `rig.Up` produces a `.jsonl` log in `{RIG_DIR}/logs/`. On failure, rig automatically prints a condensed diagnosis to the test output showing response bodies, service crashes, stall diagnostics, and correlated stderr — information Go's test framework doesn't provide.
+
+Install the CLI with `go install github.com/matgreaves/rig/cmd/rig@latest`.
+
+**Start with `rig explain`** — structured failure diagnosis from the event log:
+
+```bash
+rig explain OrderFlow              # JSON output (parseable)
+rig explain OrderFlow -p           # pretty-printed output
+
+# Example output:
+# TestOrderFlow  FAILED  3.31s  [db, temporal, api]
+#
+#   Assertions:
+#     order_test.go:42: expected 200, got 500
+#
+#   Errors:
+#     POST → api /webhook 500 (1.2ms)
+#       {"error":"column 'completed_at' does not exist"}
+#
+#   Service stderr:
+#     api: pq: column "completed_at" does not exist
+```
 
 **Find logs by test name** — don't use full paths. Tests run in parallel so "most recent" is meaningless; use the test name:
 
@@ -155,16 +177,16 @@ rig logs OrderFlow
 
 ```bash
 # Most recent failure
-rig traffic $(rig ls --failed -q -n1)
+rig explain $(rig ls --failed -q -n1)
 
 # All failures
-rig ls --failed -q | xargs -I{} rig traffic {}
+rig ls --failed -q | xargs -I{} rig explain {}
 
 # Most recent OrderFlow failure
 rig logs $(rig ls --failed -q -n1 Order)
 ```
 
-**Traffic inspection**:
+**Traffic inspection** (when you need more detail than `rig explain`):
 
 ```bash
 rig traffic OrderFlow --detail 3            # expand request #3 — headers, bodies
@@ -195,6 +217,8 @@ Five Go modules: root `go.mod`, `internal/go.mod`, `connect/temporalx/go.mod`, `
 
 ## Key files
 
+- `explain/explain.go` — failure analysis engine (`Analyze`, `AnalyzeFile`)
+- `explain/format.go` — output formatters (`JSON`, `Pretty`, `Condensed`)
 - `client/rig.go` — `Up`, `TryUp`, `EnsureServer`, core types
 - `client/services.go` — `Go`, `Func`, `Process`, `Custom` builders
 - `client/container.go` — `Container` builder

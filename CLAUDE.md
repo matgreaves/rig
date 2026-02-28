@@ -31,6 +31,7 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples
 ## Project structure
 
 - `client/` — Go client SDK (`rig.Up`, `rig.TryUp`, `rig.EnsureServer`, service builders)
+- `explain/` — failure diagnosis engine (analyzes JSONL event logs, used by client/ and cmd/rig/)
 - `connect/` — zero-dependency shared types (`Endpoint`, `Wiring`, `ParseWiring`)
 - `connect/httpx/` — HTTP client/server helpers built on rig endpoints
 - `connect/temporalx/` — Temporal client helper (sub-module)
@@ -43,22 +44,29 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples
 - `internal/testdata/` — test service fixtures (echo, tcpecho, userapi, fail)
 - `internal/integration/` — integration tests (require server + testdata)
 
-## Debugging test failures with `rig` CLI
+## Debugging test failures
 
-The `rig` CLI (`cmd/rig/`) inspects event logs written by `rigd`. Each test that calls `rig.Up` produces a `.jsonl` log file in `{RIG_DIR}/logs/`. Since `make test` runs many tests in parallel, always use the test name to find the right log — "most recent" is meaningless with parallel runs.
+When a rig test fails, the test output automatically includes a condensed diagnosis showing response bodies, service crashes, and correlated stderr. This appears before file paths in the cleanup output, prefixed with `rig:`.
+
+For deeper investigation, use the `rig` CLI (`cmd/rig/`). Each test that calls `rig.Up` produces a `.jsonl` log in `{RIG_DIR}/logs/`. Name matching is fuzzy — use the test name, not full paths.
 
 ```bash
-# See what failed
+# Start here — structured failure diagnosis
+rig explain OrderFlow              # JSON (parseable)
+rig explain OrderFlow -p           # pretty-printed
+
+# List failures
 rig ls --failed
 
-# Inspect a specific test's traffic (name matching is fuzzy — no path needed)
-rig traffic OrderFlow
-rig logs OrderFlow
+# Deeper inspection when explain isn't enough
+rig traffic OrderFlow              # all HTTP/gRPC/TCP traffic
+rig traffic OrderFlow --detail 3   # expand request #3 with headers/bodies
+rig logs OrderFlow                 # interleaved service logs
+rig logs OrderFlow --service api   # single service
 
-# Compose for scripting
-rig traffic $(rig ls --failed -q -n1)               # most recent failure
-rig ls --failed -q | xargs -I{} rig traffic {}      # all failures
-rig ls --failed -q -n1 Order                         # most recent OrderFlow failure
+# Scripting
+rig explain $(rig ls --failed -q -n1)            # most recent failure
+rig ls --failed -q | xargs -I{} rig explain {}   # all failures
 ```
 
 Key flags: `--failed`/`--passed` filter by outcome, `-q` outputs file paths for piping, `-n N` limits to N most recent results.
