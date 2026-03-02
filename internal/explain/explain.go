@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Report is the structured analysis result from a JSONL event log.
@@ -24,6 +25,7 @@ type Report struct {
 	ServiceErrors   []ServiceError   `json:"service_errors,omitempty"`
 	ServiceFailures []ServiceFailure `json:"service_failures,omitempty"`
 	Stall           *StallInfo       `json:"stall,omitempty"`
+	Phases          *PhaseTimings    `json:"phases,omitempty"`
 }
 
 // Assertion is a parsed test.note assertion.
@@ -73,6 +75,14 @@ type StallServiceInfo struct {
 	WaitingOn []string `json:"waiting_on,omitempty"`
 }
 
+// PhaseTimings records wall-clock duration of each lifecycle phase.
+type PhaseTimings struct {
+	ArtifactsMs float64 `json:"artifacts_ms,omitempty"`
+	StartupMs   float64 `json:"startup_ms,omitempty"`
+	TestMs      float64 `json:"test_ms,omitempty"`
+	TeardownMs  float64 `json:"teardown_ms,omitempty"`
+}
+
 // --- Internal event types for JSONL parsing ---
 
 type logHeader struct {
@@ -85,6 +95,7 @@ type logHeader struct {
 
 type rawEvent struct {
 	Type       string          `json:"type"`
+	Timestamp  time.Time       `json:"timestamp"`
 	Service    string          `json:"service,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	Log        *logEntry       `json:"log,omitempty"`
@@ -196,6 +207,13 @@ func Analyze(r io.Reader) (*Report, error) {
 		envUp      bool
 		envDown    bool
 		envUpIndex int // number of traffic errors when envUp fired
+		// Phase timing.
+		firstArtifact   time.Time
+		lastArtifact    time.Time
+		firstStarting   time.Time
+		envUpAt         time.Time
+		envDestroyingAt time.Time
+		envDownAt       time.Time
 	)
 
 	for scanner.Scan() {
@@ -215,9 +233,11 @@ func Analyze(r io.Reader) (*Report, error) {
 		case "environment.up":
 			envUp = true
 			envUpIndex = len(trafficErrors)
+			envUpAt = ev.Timestamp
 
 		case "environment.destroying":
 			envDown = true
+			envDestroyingAt = ev.Timestamp
 
 		case "request.completed":
 			if !envDown && ev.Request != nil && ev.Request.StatusCode >= 400 {
@@ -303,11 +323,47 @@ func Analyze(r io.Reader) (*Report, error) {
 					})
 				}
 			}
+
+		case "artifact.started", "artifact.completed", "artifact.cached":
+			if !ev.Timestamp.IsZero() {
+				if firstArtifact.IsZero() || ev.Timestamp.Before(firstArtifact) {
+					firstArtifact = ev.Timestamp
+				}
+				if ev.Type != "artifact.started" && ev.Timestamp.After(lastArtifact) {
+					lastArtifact = ev.Timestamp
+				}
+			}
+
+		case "service.starting":
+			if firstStarting.IsZero() {
+				firstStarting = ev.Timestamp
+			}
+
+		case "environment.down":
+			envDownAt = ev.Timestamp
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read events: %w", err)
+	}
+
+	// Compute phase timings from tracked timestamps.
+	var phases PhaseTimings
+	if !firstArtifact.IsZero() && !lastArtifact.IsZero() {
+		phases.ArtifactsMs = float64(lastArtifact.Sub(firstArtifact)) / float64(time.Millisecond)
+	}
+	if !firstStarting.IsZero() && !envUpAt.IsZero() {
+		phases.StartupMs = float64(envUpAt.Sub(firstStarting)) / float64(time.Millisecond)
+	}
+	if !envUpAt.IsZero() && !envDestroyingAt.IsZero() {
+		phases.TestMs = float64(envDestroyingAt.Sub(envUpAt)) / float64(time.Millisecond)
+	}
+	if !envDestroyingAt.IsZero() && !envDownAt.IsZero() {
+		phases.TeardownMs = float64(envDownAt.Sub(envDestroyingAt)) / float64(time.Millisecond)
+	}
+	if phases.ArtifactsMs > 0 || phases.StartupMs > 0 || phases.TestMs > 0 || phases.TeardownMs > 0 {
+		report.Phases = &phases
 	}
 
 	// If the test passed, all non-2xx responses were expected behavior
