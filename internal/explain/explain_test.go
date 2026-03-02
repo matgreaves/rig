@@ -117,6 +117,45 @@ func TestAnalyzePassed(t *testing.T) {
 	}
 }
 
+func TestAnalyzePhaseTimings(t *testing.T) {
+	// passed.jsonl has service.starting → environment.up → environment.destroying → environment.down
+	// but no artifact events, so only startup/test/teardown phases are populated.
+	r, err := AnalyzeFile("testdata/passed.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Phases == nil {
+		t.Fatal("expected Phases to be populated for passed test")
+	}
+	if r.Phases.ArtifactsMs != 0 {
+		t.Errorf("ArtifactsMs = %v, want 0 (no artifact events)", r.Phases.ArtifactsMs)
+	}
+	if r.Phases.StartupMs <= 0 {
+		t.Errorf("StartupMs = %v, want > 0", r.Phases.StartupMs)
+	}
+	if r.Phases.TestMs <= 0 {
+		t.Errorf("TestMs = %v, want > 0", r.Phases.TestMs)
+	}
+	if r.Phases.TeardownMs <= 0 {
+		t.Errorf("TeardownMs = %v, want > 0", r.Phases.TeardownMs)
+	}
+
+	// Phases should roughly sum to the total duration.
+	sum := r.Phases.StartupMs + r.Phases.TestMs + r.Phases.TeardownMs
+	if sum > r.DurationMs*2 {
+		t.Errorf("phase sum %.1fms is way more than duration %.1fms", sum, r.DurationMs)
+	}
+
+	// service_crash.jsonl never reaches environment.up, so Phases should be nil.
+	r2, err := AnalyzeFile("testdata/service_crash.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.Phases != nil {
+		t.Errorf("expected nil Phases for crashed test, got %+v", r2.Phases)
+	}
+}
+
 func TestPrettyFormat(t *testing.T) {
 	r, err := AnalyzeFile("testdata/assertion_failure.jsonl")
 	if err != nil {
