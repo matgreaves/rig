@@ -409,7 +409,7 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 	// Analyze all tests.
 	var tests []ciTestJSON
 	var artifacts []ciArtifactJSON
-	artifactSeen := map[string]bool{}
+	artifactIdx := map[string]int{} // key → index in artifacts slice
 
 	for _, path := range paths {
 		report, err := explain.AnalyzeFile(path)
@@ -435,9 +435,12 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 
 		fileArtifacts := scanArtifactEvents(path)
 		for _, a := range fileArtifacts {
-			if !artifactSeen[a.Key] {
-				artifactSeen[a.Key] = true
+			if idx, seen := artifactIdx[a.Key]; !seen {
+				artifactIdx[a.Key] = len(artifacts)
 				artifacts = append(artifacts, a)
+			} else if artifacts[idx].Cached && !a.Cached {
+				// Prefer the resolved entry (with duration) over cached.
+				artifacts[idx] = a
 			}
 		}
 	}
