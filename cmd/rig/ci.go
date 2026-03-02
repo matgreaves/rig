@@ -622,9 +622,9 @@ func formatRunDuration(d time.Duration) string {
 // --- Artifact event scanning ---
 
 type artifactEvent struct {
-	Type    string  `json:"type"`
-	Key     string  `json:"key"`
-	Elapsed float64 `json:"elapsed_ms"`
+	Type      string    `json:"type"`
+	Artifact  string    `json:"artifact"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 func scanArtifactEvents(path string) []ciArtifactJSON {
@@ -636,6 +636,7 @@ func scanArtifactEvents(path string) []ciArtifactJSON {
 
 	var results []ciArtifactJSON
 	seen := map[string]bool{}
+	started := map[string]time.Time{} // artifact key → start timestamp
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
@@ -645,22 +646,25 @@ func scanArtifactEvents(path string) []ciArtifactJSON {
 			continue
 		}
 		switch ev.Type {
+		case "artifact.started":
+			started[ev.Artifact] = ev.Timestamp
 		case "artifact.completed":
-			if seen[ev.Key] {
+			if seen[ev.Artifact] {
 				continue
 			}
-			seen[ev.Key] = true
-			results = append(results, ciArtifactJSON{
-				Key:        ev.Key,
-				DurationMs: ev.Elapsed,
-			})
+			seen[ev.Artifact] = true
+			a := ciArtifactJSON{Key: ev.Artifact}
+			if t, ok := started[ev.Artifact]; ok {
+				a.DurationMs = float64(ev.Timestamp.Sub(t).Milliseconds())
+			}
+			results = append(results, a)
 		case "artifact.cached":
-			if seen[ev.Key] {
+			if seen[ev.Artifact] {
 				continue
 			}
-			seen[ev.Key] = true
+			seen[ev.Artifact] = true
 			results = append(results, ciArtifactJSON{
-				Key:    ev.Key,
+				Key:    ev.Artifact,
 				Cached: true,
 			})
 		}
