@@ -16,7 +16,7 @@ If you need to run tests for a single module with `go test` directly (e.g. `cd e
 
 ### Sub-modules
 
-The project has six Go modules:
+The project has seven Go modules:
 
 | Module | Path | Purpose |
 |--------|------|---------|

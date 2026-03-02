@@ -153,20 +153,36 @@ rig.Postgres().
     InitSQL("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)")
 ```
 
+### Redis (`"redis"`)
+
+Managed Redis container with automatic database isolation.
+
+- **No user-defined ingress**: fixed TCP on port 6379
+- **Default image**: `redis:7-alpine`
+- **Published attributes**: `REDIS_URL` (`redis://${HOST}:${PORT}/{db}`)
+- **Pooled**: shares a single container across test environments; each gets an isolated database number
+
+`REDIS_URL` uses template variables (`${HOST}`, `${PORT}`) so it stays correct through proxy address rewriting. The database number is assigned automatically by the pool.
+
+```go
+rig.Redis()
+rig.Redis().Image("redis:6-alpine")
+```
+
 ### Temporal (`"temporal"`)
 
 Downloads and runs a Temporal dev server.
 
 - **Default ingresses**: `"default"` (gRPC) + `"ui"` (HTTP)
 - **Default CLI version**: `1.5.1`
-- **Default namespace**: `"default"`
 - **Published attributes**: `TEMPORAL_ADDRESS` (`${HOSTPORT}`), `TEMPORAL_NAMESPACE`
+- **Pooled**: shares a single dev server process across test environments; each gets an isolated namespace
 
-`TEMPORAL_ADDRESS` uses the `${HOSTPORT}` template variable, which resolves to `host:port` — staying correct through proxy address rewriting.
+`TEMPORAL_ADDRESS` uses the `${HOSTPORT}` template variable, which resolves to `host:port` — staying correct through proxy address rewriting. The namespace is assigned automatically by the pool.
 
 ```go
-rig.Temporal().
-    Namespace("test-ns")
+rig.Temporal()
+rig.Temporal().Version("1.5.1")
 ```
 
 ### Custom
@@ -190,6 +206,7 @@ rig.Custom("redis", map[string]any{"image": "redis:7-alpine"})
 | Process | `"default"` | HTTP | |
 | Container | `"default"` | HTTP | Must set container port |
 | Postgres | (automatic) | TCP | Fixed port 5432, no user override |
+| Redis | (automatic) | TCP | Fixed port 6379, no user override |
 | Temporal | `"default"` + `"ui"` | gRPC + HTTP | |
 | Custom | `"default"` | HTTP | |
 

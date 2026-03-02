@@ -25,6 +25,7 @@ ep := env.Endpoint("api") // connect.Endpoint{HostPort, Protocol, Attributes}
 | `github.com/matgreaves/rig/connect` | Shared types: `Endpoint`, `Wiring`, `ParseWiring`, typed `Attr[T]` | Zero |
 | `github.com/matgreaves/rig/connect/httpx` | HTTP client/server from endpoints | Zero |
 | `github.com/matgreaves/rig/connect/pgx` | `pgxpool.Pool` / `*sql.DB` from endpoint | pgx/v5 |
+| `github.com/matgreaves/rig/connect/redisx` | Redis client from endpoint | go-redis/v9 |
 | `github.com/matgreaves/rig/connect/temporalx` | Temporal client from endpoint | Temporal SDK |
 
 Root module has zero external dependencies. `connect/pgx` and `connect/temporalx` are separate Go modules to isolate heavy deps.
@@ -35,9 +36,10 @@ Root module has zero external dependencies. `connect/pgx` and `connect/temporalx
 |-------------|-------------|-----------------|
 | `rig.Go("./cmd/api")` | Builds & runs Go module | HTTP |
 | `rig.Func(myapp.Run)` | Runs function in test process | HTTP |
-| `rig.Container("redis:7").Port(6379)` | Docker container | HTTP |
+| `rig.Container("nginx:alpine").Port(80)` | Docker container | HTTP |
 | `rig.Process("/path/to/bin")` | Pre-built binary | HTTP |
-| `rig.Postgres()` | Managed Postgres container | Postgres (TCP) |
+| `rig.Postgres()` | Managed Postgres container | TCP (5432) |
+| `rig.Redis()` | Managed Redis container | TCP (6379) |
 | `rig.Temporal()` | Managed Temporal dev server | gRPC |
 
 All builders use method chaining: `.Egress("name")`, `.NoIngress()`, `.Ingress("name", def)`, `.Args(...)`, `.InitHook(fn)`, `.PrestartHook(fn)`.
@@ -71,9 +73,12 @@ connect.PGPort.MustGet(ep)      // string
 connect.PGDatabase.MustGet(ep)  // string
 connect.PostgresDSN(ep)         // full DSN string
 
+// Redis
+connect.RedisURL.MustGet(ep)    // "redis://host:port/0"
+
 // Temporal
 connect.TemporalAddress.MustGet(ep)    // "host:port"
-connect.TemporalNamespace.MustGet(ep)  // "default"
+connect.TemporalNamespace.MustGet(ep)  // "rig_ns_0"
 ```
 
 Define custom attributes with `connect.Attr[T]{Name: "MY_ATTR"}`.
@@ -213,7 +218,7 @@ make test    # Build + run all tests
 make clean   # Remove artifacts
 ```
 
-Six Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/temporalx/go.mod`, `connect/pgx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
+Seven Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pgx/go.mod`, `connect/redisx/go.mod`, `connect/temporalx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
 
 ## Key files
 
@@ -223,10 +228,11 @@ Six Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/tem
 - `client/services.go` — `Go`, `Func`, `Process`, `Custom` builders
 - `client/container.go` — `Container` builder
 - `client/postgres.go` — `Postgres` builder
+- `client/redis.go` — `Redis` builder
 - `client/temporal.go` — `Temporal` builder
 - `client/environment.go` — `Environment`, `Endpoint()` lookup
 - `connect/wiring.go` — `Wiring`, `ParseWiring`
-- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `TemporalAddress`, etc.)
+- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `RedisURL`, `TemporalAddress`, etc.)
 - `connect/httpx/client.go` — `httpx.New`, HTTP client helpers
 - `connect/httpx/server.go` — `httpx.ListenAndServe` for services
 - `internal/server/` — rigd server (not importable by consumers)
