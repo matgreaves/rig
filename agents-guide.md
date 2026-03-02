@@ -217,37 +217,31 @@ rig logs OrderFlow --grep "connection refused"
 
 Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red markers with file:line info, interleaved with the service output that was happening at the time.
 
-### CI failures
-
-`rig ci` downloads artifacts from GitHub Actions and runs the same analysis tools against CI logs. Requires the `gh` CLI.
+### CI failures — when CI is red, start here
 
 ```bash
-# Summary of current branch (JSON — one-shot for agents)
-rig ci
+# 1. Get the full picture (JSON — parseable)
+rig ci <PR#>
 
-# Summary of a PR (pretty — for humans)
-rig ci 74 -p
+# 2. Or human-readable with failure details
+rig ci <PR#> --failed -p -v
 
-# Only failures, with verbose explain output
-rig ci 74 --failed -p -v
+# 3. Drill into a specific test
+rig ci <PR#> explain <test> -p
 
-# Delegate to any existing command against CI logs
-rig ci 74 explain S3 -p
-rig ci 74 ls --failed
-rig ci traffic S3              # implicit target (current branch)
-rig ci 74 logs S3 --service api
+# 4. All the same commands work: ls, explain, traffic, logs
+rig ci <PR#> ls --failed
+rig ci <PR#> traffic S3
+rig ci <PR#> logs S3 --service api
 ```
 
-Target is optional: empty = current branch, 1–6 digits = PR number, 7+ digits = run ID. Artifacts are cached under `.rig/ci/` so follow-up commands are instant.
+Target is optional (defaults to current branch), or a PR number, or a run ID. Artifacts are cached so follow-up commands are instant.
 
 The default JSON output includes the full explain report per test — pipe to `jq` for programmatic access:
 
 ```bash
-# Get all failed test names
-rig ci 74 --failed | jq -r '.tests[].test'
-
-# Check if CI passed
-rig ci | jq -r '.run.conclusion'
+rig ci <PR#> --failed | jq -r '.tests[].test'  # failed test names
+rig ci | jq -r '.run.conclusion'                # did CI pass?
 ```
 
 ## Build & test (for rig contributors)
