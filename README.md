@@ -119,6 +119,14 @@ rig.Redis()
 rig.Redis().Image("redis:6-alpine")
 ```
 
+### S3
+
+Managed S3-compatible object storage backed by SeaweedFS.
+
+```go
+rig.S3()
+```
+
 ### Temporal
 
 Managed Temporal dev server. Downloads the CLI binary on first use.
@@ -178,8 +186,13 @@ port := connect.PGPort.MustGet(ep)
 ep := env.Endpoint("cache")
 url := connect.RedisURL.MustGet(ep)            // "redis://127.0.0.1:63421/0"
 
+// S3
+ep := env.Endpoint("storage")
+endpoint := connect.S3Endpoint.MustGet(ep)     // "http://127.0.0.1:8333"
+bucket := connect.S3Bucket.MustGet(ep)         // "rig-1"
+
 // Temporal
-ep := env.Endpoint("temporal")
+ep = env.Endpoint("temporal")
 addr := connect.TemporalAddress.MustGet(ep)   // "127.0.0.1:7233"
 ns := connect.TemporalNamespace.MustGet(ep)    // "rig_ns_0"
 ```
@@ -214,6 +227,15 @@ import "github.com/matgreaves/rig/connect/redisx"
 
 client := redisx.Connect(env.Endpoint("cache"))
 client.Set(ctx, "key", "value", 0)
+```
+
+### S3 — `connect/s3x`
+
+```go
+import "github.com/matgreaves/rig/connect/s3x"
+
+client := s3x.Connect(env.Endpoint("storage"))
+bucket := s3x.Bucket(env.Endpoint("storage"))
 ```
 
 ### Temporal — `connect/temporalx`
@@ -348,6 +370,7 @@ rig traffic $(rig ls --failed -q -n1)        # most recent failure
 | `connect/httpx` | `github.com/matgreaves/rig/connect/httpx` | HTTP client/server helpers |
 | `connect/pgx` | `github.com/matgreaves/rig/connect/pgx` | Postgres client (`pgxpool`, `*sql.DB`) |
 | `connect/redisx` | `github.com/matgreaves/rig/connect/redisx` | Redis client (`go-redis/v9`) |
+| `connect/s3x` | `github.com/matgreaves/rig/connect/s3x` | S3 client (`aws-sdk-go-v2`) |
 | `connect/temporalx` | `github.com/matgreaves/rig/connect/temporalx` | Temporal client helper |
 
 Server internals live in `internal/` and cannot be imported.

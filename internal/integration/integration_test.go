@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	rig "github.com/matgreaves/rig/client"
 	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/connect/httpx"
@@ -70,6 +74,7 @@ func TestMain(m *testing.M) {
 
 	pgPool := service.NewPostgresPool(os.Getpid())
 	redisPool := service.NewRedisPool(os.Getpid())
+	s3Pool := service.NewS3Pool(os.Getpid())
 
 	cacheDir := filepath.Join(dir, "..", ".rig", "cache")
 	temporalPool := service.NewTemporalPool(cacheDir)
@@ -82,6 +87,7 @@ func TestMain(m *testing.M) {
 	reg.Register("postgres", service.NewPostgres(pgPool))
 	reg.Register("redis", service.NewRedis(redisPool))
 	reg.Register("temporal", service.NewTemporal(temporalPool))
+	reg.Register("s3", service.NewS3(s3Pool))
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 
@@ -106,6 +112,7 @@ func TestMain(m *testing.M) {
 
 	ts.Close()
 	temporalPool.Close()
+	s3Pool.Close()
 	redisPool.Close()
 	pgPool.Close()
 	os.RemoveAll(tmpDir)
@@ -600,6 +607,113 @@ func TestUp(t *testing.T) {
 		conn2.Close()
 
 		t.Logf("shared container: url1=%s, url2=%s", url1, url2)
+	})
+
+	t.Run("S3", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"storage": rig.S3(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep := env.Endpoint("storage")
+
+		// Verify TCP connectivity.
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("s3 dial: %v", err)
+		}
+		conn.Close()
+
+		// Verify endpoint attributes.
+		s3Endpoint := ep.Attr("S3_ENDPOINT")
+		if s3Endpoint == "" {
+			t.Error("S3_ENDPOINT is empty")
+		}
+		if !strings.HasPrefix(s3Endpoint, "http://") {
+			t.Errorf("S3_ENDPOINT = %q, want http:// prefix", s3Endpoint)
+		}
+		s3Bucket := ep.Attr("S3_BUCKET")
+		if s3Bucket == "" {
+			t.Error("S3_BUCKET is empty")
+		}
+		if !strings.HasPrefix(s3Bucket, "rig-") {
+			t.Errorf("S3_BUCKET = %q, want rig-* prefix", s3Bucket)
+		}
+
+		// Build S3 client from endpoint attributes (same pattern as s3x.Connect).
+		s3Client := s3.New(s3.Options{
+			BaseEndpoint: aws.String(s3Endpoint),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(ep.Attr("AWS_ACCESS_KEY_ID"), ep.Attr("AWS_SECRET_ACCESS_KEY"), ""),
+			UsePathStyle: true,
+		})
+
+		// Verify we can PutObject and GetObject.
+		_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket: aws.String(s3Bucket),
+			Key:    aws.String("test-object.txt"),
+			Body:   strings.NewReader("hello s3"),
+		})
+		if err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		getResult, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+			Bucket: aws.String(s3Bucket),
+			Key:    aws.String("test-object.txt"),
+		})
+		if err != nil {
+			t.Fatalf("GetObject: %v", err)
+		}
+		defer getResult.Body.Close()
+		body, _ := io.ReadAll(getResult.Body)
+		if string(body) != "hello s3" {
+			t.Errorf("GetObject body = %q, want %q", body, "hello s3")
+		}
+	})
+
+	t.Run("S3SharedContainer", func(t *testing.T) {
+		t.Parallel()
+
+		env1 := rig.Up(t, rig.Services{
+			"storage": rig.S3(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		env2 := rig.Up(t, rig.Services{
+			"storage": rig.S3(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep1 := env1.Endpoint("storage")
+		ep2 := env2.Endpoint("storage")
+
+		// Isolated buckets: different S3_BUCKET values.
+		bucket1 := ep1.Attr("S3_BUCKET")
+		bucket2 := ep2.Attr("S3_BUCKET")
+		if bucket1 == bucket2 {
+			t.Fatalf("expected different buckets, both got %s", bucket1)
+		}
+		if !strings.HasPrefix(bucket1, "rig-") {
+			t.Errorf("bucket1 = %q, want rig-* prefix", bucket1)
+		}
+		if !strings.HasPrefix(bucket2, "rig-") {
+			t.Errorf("bucket2 = %q, want rig-* prefix", bucket2)
+		}
+
+		// Both environments should be reachable.
+		conn1, err := net.DialTimeout("tcp", ep1.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env1 dial: %v", err)
+		}
+		conn1.Close()
+
+		conn2, err := net.DialTimeout("tcp", ep2.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env2 dial: %v", err)
+		}
+		conn2.Close()
+
+		t.Logf("shared container: bucket1=%s, bucket2=%s", bucket1, bucket2)
 	})
 
 	t.Run("PostgresInitSQL_BadSQL", func(t *testing.T) {

@@ -26,6 +26,7 @@ ep := env.Endpoint("api") // connect.Endpoint{HostPort, Protocol, Attributes}
 | `github.com/matgreaves/rig/connect/httpx` | HTTP client/server from endpoints | Zero |
 | `github.com/matgreaves/rig/connect/pgx` | `pgxpool.Pool` / `*sql.DB` from endpoint | pgx/v5 |
 | `github.com/matgreaves/rig/connect/redisx` | Redis client from endpoint | go-redis/v9 |
+| `github.com/matgreaves/rig/connect/s3x` | S3 client from endpoint | aws-sdk-go-v2 |
 | `github.com/matgreaves/rig/connect/temporalx` | Temporal client from endpoint | Temporal SDK |
 
 Root module has zero external dependencies. `connect/pgx` and `connect/temporalx` are separate Go modules to isolate heavy deps.
@@ -40,6 +41,7 @@ Root module has zero external dependencies. `connect/pgx` and `connect/temporalx
 | `rig.Process("/path/to/bin")` | Pre-built binary | HTTP |
 | `rig.Postgres()` | Managed Postgres container | TCP (5432) |
 | `rig.Redis()` | Managed Redis container | TCP (6379) |
+| `rig.S3()` | Managed S3 storage (SeaweedFS) | TCP (8333) |
 | `rig.Temporal()` | Managed Temporal dev server | gRPC |
 
 All builders use method chaining: `.Egress("name")`, `.NoIngress()`, `.Ingress("name", def)`, `.Args(...)`, `.InitHook(fn)`, `.PrestartHook(fn)`.
@@ -75,6 +77,10 @@ connect.PostgresDSN(ep)         // full DSN string
 
 // Redis
 connect.RedisURL.MustGet(ep)    // "redis://host:port/0"
+
+// S3
+connect.S3Endpoint.MustGet(ep)       // "http://host:port"
+connect.S3Bucket.MustGet(ep)         // "rig-1"
 
 // Temporal
 connect.TemporalAddress.MustGet(ep)    // "host:port"
@@ -218,7 +224,7 @@ make test    # Build + run all tests
 make clean   # Remove artifacts
 ```
 
-Seven Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pgx/go.mod`, `connect/redisx/go.mod`, `connect/temporalx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
+Eight Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pgx/go.mod`, `connect/redisx/go.mod`, `connect/s3x/go.mod`, `connect/temporalx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
 
 ## Key files
 
@@ -229,10 +235,11 @@ Seven Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/p
 - `client/container.go` — `Container` builder
 - `client/postgres.go` — `Postgres` builder
 - `client/redis.go` — `Redis` builder
+- `client/s3.go` — `S3` builder
 - `client/temporal.go` — `Temporal` builder
 - `client/environment.go` — `Environment`, `Endpoint()` lookup
 - `connect/wiring.go` — `Wiring`, `ParseWiring`
-- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `RedisURL`, `TemporalAddress`, etc.)
+- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `RedisURL`, `S3Endpoint`, `TemporalAddress`, etc.)
 - `connect/httpx/client.go` — `httpx.New`, HTTP client helpers
 - `connect/httpx/server.go` — `httpx.ListenAndServe` for services
 - `internal/server/` — rigd server (not importable by consumers)

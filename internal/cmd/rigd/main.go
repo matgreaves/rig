@@ -33,6 +33,9 @@ func main() {
 	redisPool := service.NewRedisPool(os.Getpid())
 	defer redisPool.Close()
 
+	s3Pool := service.NewS3Pool(os.Getpid())
+	defer s3Pool.Close()
+
 	cacheDir := filepath.Join(*rigDir, "cache")
 	temporalPool := service.NewTemporalPool(cacheDir)
 	defer temporalPool.Close()
@@ -45,6 +48,7 @@ func main() {
 	reg.Register("postgres", service.NewPostgres(pgPool))
 	reg.Register("redis", service.NewRedis(redisPool))
 	reg.Register("temporal", service.NewTemporal(temporalPool))
+	reg.Register("s3", service.NewS3(s3Pool))
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 
