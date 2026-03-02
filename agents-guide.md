@@ -143,6 +143,7 @@ By default, rig proxies every service edge and captures all HTTP requests, gRPC 
 |----------|---------|---------|
 | `RIG_DIR` | Base directory for rigd state | `~/.rig` |
 | `RIG_BINARY` | Path to rigd binary (skips auto-download) | Auto-download |
+| `RIG_LOGS` | Override log directory for CLI commands | `{RIG_DIR}/logs` |
 | `RIG_PRESERVE` | Keep temp directories after teardown | Unset |
 | `RIG_PRESERVE_ON_FAILURE` | Keep temp directories only on test failure | Unset |
 
@@ -215,6 +216,39 @@ rig logs OrderFlow --grep "connection refused"
 ```
 
 Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red markers with file:line info, interleaved with the service output that was happening at the time.
+
+### CI failures
+
+`rig ci` downloads artifacts from GitHub Actions and runs the same analysis tools against CI logs. Requires the `gh` CLI.
+
+```bash
+# Summary of current branch (JSON — one-shot for agents)
+rig ci
+
+# Summary of a PR (pretty — for humans)
+rig ci 74 -p
+
+# Only failures, with verbose explain output
+rig ci 74 --failed -p -v
+
+# Delegate to any existing command against CI logs
+rig ci 74 explain S3 -p
+rig ci 74 ls --failed
+rig ci traffic S3              # implicit target (current branch)
+rig ci 74 logs S3 --service api
+```
+
+Target is optional: empty = current branch, 1–6 digits = PR number, 7+ digits = run ID. Artifacts are cached under `.rig/ci/` so follow-up commands are instant.
+
+The default JSON output includes the full explain report per test — pipe to `jq` for programmatic access:
+
+```bash
+# Get all failed test names
+rig ci 74 --failed | jq -r '.tests[].test'
+
+# Check if CI passed
+rig ci | jq -r '.run.conclusion'
+```
 
 ## Build & test (for rig contributors)
 

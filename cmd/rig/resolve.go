@@ -20,13 +20,28 @@ func defaultRigDir() string {
 	return filepath.Join(home, ".rig")
 }
 
-// scanLogDir returns all .jsonl file paths in {rigDir}/logs/ whose base
+// logDir returns the directory containing JSONL log files. If RIG_LOGS is
+// set, it is used directly; otherwise falls back to {rigDir}/logs/.
+func logDir() string {
+	if dir := os.Getenv("RIG_LOGS"); dir != "" {
+		return dir
+	}
+	return filepath.Join(defaultRigDir(), "logs")
+}
+
+// scanLogDir returns all .jsonl file paths in logDir() whose base
 // filename (without extension) matches the given glob pattern. Pass "" to
 // match all files. Results are sorted lexicographically (chronological
 // since IDs are time-prefixed).
 func scanLogDir(pattern string) ([]string, error) {
-	logDir := filepath.Join(defaultRigDir(), "logs")
-	entries, err := os.ReadDir(logDir)
+	return scanDir(logDir(), pattern)
+}
+
+// scanDir returns all .jsonl file paths in dir whose base filename
+// (without extension) matches the given glob pattern. Pass "" to match
+// all files. Results are sorted lexicographically.
+func scanDir(dir, pattern string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +63,7 @@ func scanLogDir(pattern string) ([]string, error) {
 				continue
 			}
 		}
-		paths = append(paths, filepath.Join(logDir, e.Name()))
+		paths = append(paths, filepath.Join(dir, e.Name()))
 	}
 	sort.Strings(paths)
 	return paths, nil
@@ -76,7 +91,7 @@ func resolveLogFile(arg string) (string, error) {
 	}
 	if len(matches) == 0 {
 		return "", fmt.Errorf("no log files matching %q in %s",
-			arg, filepath.Join(defaultRigDir(), "logs"))
+			arg, logDir())
 	}
 	return matches[len(matches)-1], nil
 }

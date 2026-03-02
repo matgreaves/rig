@@ -16,3 +16,12 @@ jobs:
 
       - name: Test
         run: make test
+
+      - name: Upload rig artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rig-artifacts
+          path: |
+            .rig/logs/
+            .rig/tmp/

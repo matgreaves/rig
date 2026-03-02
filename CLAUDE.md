@@ -77,6 +77,21 @@ rig ls --failed -q | xargs -I{} rig explain {}   # all failures
 
 Key flags: `--failed`/`--passed` filter by outcome, `-q` outputs file paths for piping, `-n N` limits to N most recent results.
 
+**CI failures** — when CI is red, start here:
+
+```bash
+# 1. Get the full picture (JSON — parseable)
+rig ci <PR#>
+
+# 2. Or human-readable summary with failure details
+rig ci <PR#> --failed -p -v
+
+# 3. Drill into a specific test
+rig ci <PR#> explain <test> -p
+```
+
+Target is optional (defaults to current branch), or a PR number, or a run ID. Artifacts are cached so follow-up commands are instant. All commands also support `RIG_LOGS` env var to override the log directory.
+
 ## Key conventions
 
 - Service types are registered in `internal/cmd/rigd/main.go` and `internal/integration/integration_test.go:startTestServer`
