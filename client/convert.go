@@ -286,14 +286,8 @@ func hookToSpec(h hook, handlers map[string]hookFunc) (*specHookSpec, error) {
 
 func temporalToSpec(d *TemporalDef, handlers map[string]hookFunc) (specService, error) {
 	var cfg json.RawMessage
-	if d.version != "" || d.namespace != "" {
-		cfgMap := make(map[string]string)
-		if d.version != "" {
-			cfgMap["version"] = d.version
-		}
-		if d.namespace != "" {
-			cfgMap["namespace"] = d.namespace
-		}
+	if d.version != "" {
+		cfgMap := map[string]string{"version": d.version}
 		cfg, _ = json.Marshal(cfgMap)
 	}
 

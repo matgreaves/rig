@@ -70,13 +70,16 @@ func TestMain(m *testing.M) {
 
 	pgPool := service.NewPostgresPool(os.Getpid())
 
+	cacheDir := filepath.Join(dir, "..", ".rig", "cache")
+	temporalPool := service.NewTemporalPool(cacheDir)
+
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
 	reg.Register("postgres", service.NewPostgres(pgPool))
-	reg.Register("temporal", service.Temporal{})
+	reg.Register("temporal", service.NewTemporal(temporalPool))
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 
@@ -100,6 +103,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	ts.Close()
+	temporalPool.Close()
 	pgPool.Close()
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
@@ -468,8 +472,9 @@ func TestUp(t *testing.T) {
 		if got := ep.Attr("TEMPORAL_ADDRESS"); got == "" {
 			t.Error("TEMPORAL_ADDRESS is empty")
 		}
-		if got := ep.Attr("TEMPORAL_NAMESPACE"); got != "default" {
-			t.Errorf("TEMPORAL_NAMESPACE = %q, want default", got)
+		ns := ep.Attr("TEMPORAL_NAMESPACE")
+		if !strings.HasPrefix(ns, "rig_ns_") {
+			t.Errorf("TEMPORAL_NAMESPACE = %q, want rig_ns_* prefix", ns)
 		}
 
 		// UI reachable.
@@ -482,6 +487,51 @@ func TestUp(t *testing.T) {
 		if resp.StatusCode >= 500 {
 			t.Errorf("temporal UI status: %d, want < 500", resp.StatusCode)
 		}
+	})
+
+	t.Run("TemporalSharedServer", func(t *testing.T) {
+		t.Parallel()
+
+		// Two concurrent Temporal envs should share a single process
+		// but get isolated namespaces.
+		env1 := rig.Up(t, rig.Services{
+			"temporal": rig.Temporal(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		env2 := rig.Up(t, rig.Services{
+			"temporal": rig.Temporal(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep1 := env1.Endpoint("temporal")
+		ep2 := env2.Endpoint("temporal")
+
+		// Isolated namespaces: different TEMPORAL_NAMESPACE values.
+		ns1 := ep1.Attr("TEMPORAL_NAMESPACE")
+		ns2 := ep2.Attr("TEMPORAL_NAMESPACE")
+		if ns1 == ns2 {
+			t.Fatalf("expected different namespaces, both got %s", ns1)
+		}
+		if !strings.HasPrefix(ns1, "rig_ns_") {
+			t.Errorf("ns1 = %q, want rig_ns_* prefix", ns1)
+		}
+		if !strings.HasPrefix(ns2, "rig_ns_") {
+			t.Errorf("ns2 = %q, want rig_ns_* prefix", ns2)
+		}
+
+		// Both environments should be reachable on the same gRPC port.
+		conn1, err := net.DialTimeout("tcp", ep1.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env1 dial: %v", err)
+		}
+		conn1.Close()
+
+		conn2, err := net.DialTimeout("tcp", ep2.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env2 dial: %v", err)
+		}
+		conn2.Close()
+
+		t.Logf("shared server: ns1=%s, ns2=%s", ns1, ns2)
 	})
 
 	t.Run("PostgresInitSQL_BadSQL", func(t *testing.T) {
@@ -898,9 +948,9 @@ func TestObserveAttributes(t *testing.T) {
 		t.Errorf("TEMPORAL_ADDRESS = %q, want %q (proxy address)", got, wantAddr)
 	}
 
-	// Non-address attrs should be unchanged.
-	if got := ep.Attr("TEMPORAL_NAMESPACE"); got != "default" {
-		t.Errorf("TEMPORAL_NAMESPACE = %q, want default", got)
+	// Non-address attrs should be unchanged (pool-assigned namespace).
+	if got := ep.Attr("TEMPORAL_NAMESPACE"); !strings.HasPrefix(got, "rig_ns_") {
+		t.Errorf("TEMPORAL_NAMESPACE = %q, want rig_ns_* prefix", got)
 	}
 
 	// Verify TCP connectivity through the proxy.

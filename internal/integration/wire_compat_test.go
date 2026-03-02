@@ -102,7 +102,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		"mypostgres": rig.Postgres().
 			Image("postgres:15").
 			InitSQL("CREATE TABLE t (id INT)", "INSERT INTO t VALUES (1)"),
-		"mytemporal": rig.Temporal().Version("1.5.1").Namespace("test-ns"),
+		"mytemporal": rig.Temporal().Version("1.5.1"),
 		"mycustom":   rig.Custom("mytype", map[string]any{"key": "val"}).Args("-x"),
 		"myfunc":     rig.Func(func(ctx context.Context) error { return nil }),
 	}, rig.WithServer(ts.URL), rig.WithTimeout(5*time.Second))
@@ -286,9 +286,6 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		json.Unmarshal(svc.Config, &cfg)
 		if cfg["version"] != "1.5.1" {
 			t.Errorf("mytemporal config.version = %q, want 1.5.1", cfg["version"])
-		}
-		if cfg["namespace"] != "test-ns" {
-			t.Errorf("mytemporal config.namespace = %q, want test-ns", cfg["namespace"])
 		}
 		if _, ok := svc.Ingresses["default"]; !ok {
 			t.Error("mytemporal missing default ingress")
