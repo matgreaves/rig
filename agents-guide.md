@@ -143,6 +143,7 @@ By default, rig proxies every service edge and captures all HTTP requests, gRPC 
 |----------|---------|---------|
 | `RIG_DIR` | Base directory for rigd state | `~/.rig` |
 | `RIG_BINARY` | Path to rigd binary (skips auto-download) | Auto-download |
+| `RIG_LOGS` | Override log directory for CLI commands | `{RIG_DIR}/logs` |
 | `RIG_PRESERVE` | Keep temp directories after teardown | Unset |
 | `RIG_PRESERVE_ON_FAILURE` | Keep temp directories only on test failure | Unset |
 
@@ -215,6 +216,33 @@ rig logs OrderFlow --grep "connection refused"
 ```
 
 Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red markers with file:line info, interleaved with the service output that was happening at the time.
+
+### CI failures — when CI is red, start here
+
+```bash
+# 1. Get the full picture (JSON — parseable)
+rig ci <PR#>
+
+# 2. Or human-readable with failure details
+rig ci <PR#> --failed -p -v
+
+# 3. Drill into a specific test
+rig ci <PR#> explain <test> -p
+
+# 4. All the same commands work: ls, explain, traffic, logs
+rig ci <PR#> ls --failed
+rig ci <PR#> traffic S3
+rig ci <PR#> logs S3 --service api
+```
+
+Target is optional (defaults to current branch), or a PR number, or a run ID. Artifacts are cached so follow-up commands are instant.
+
+The default JSON output includes the full explain report per test — pipe to `jq` for programmatic access:
+
+```bash
+rig ci <PR#> --failed | jq -r '.tests[].test'  # failed test names
+rig ci | jq -r '.run.conclusion'                # did CI pass?
+```
 
 ## Build & test (for rig contributors)
 
