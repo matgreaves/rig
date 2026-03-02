@@ -47,7 +47,9 @@ func runCi(args []string) error {
 	}
 
 	// Locate log directory within the artifact cache.
-	ciLogDir := filepath.Join(dir, ".rig", "logs")
+	// upload-artifact@v4 strips the common parent (.rig/) from the
+	// uploaded paths, so logs land at {dir}/logs/ not {dir}/.rig/logs/.
+	ciLogDir := filepath.Join(dir, "logs")
 	if _, err := os.Stat(ciLogDir); err != nil {
 		return fmt.Errorf("no .rig/logs/ found in artifacts for run %d", runID)
 	}
@@ -279,7 +281,7 @@ func ensureArtifacts(runID int64) (string, error) {
 	dir := filepath.Join(defaultRigDir(), "ci", owner, strconv.FormatInt(runID, 10))
 
 	// Check cache.
-	if _, err := os.Stat(filepath.Join(dir, ".rig", "logs")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "logs")); err == nil {
 		return dir, nil
 	}
 
@@ -550,7 +552,7 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 
 	// Summary line — always reflects the full run, not filtered view.
 	fmt.Fprintln(w)
-	parts := []string{fmt.Sprintf("%d tests:", summary.Total)}
+	var parts []string
 	if summary.Passed > 0 {
 		parts = append(parts, fmt.Sprintf("%d passed", summary.Passed))
 	}
@@ -560,7 +562,7 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 	if summary.Crashed > 0 {
 		parts = append(parts, fmt.Sprintf("%d crashed", summary.Crashed))
 	}
-	fmt.Fprintln(w, strings.Join(parts, ", "))
+	fmt.Fprintf(w, "%d tests: %s\n", summary.Total, strings.Join(parts, ", "))
 
 	// Failure details.
 	for _, t := range tests {
