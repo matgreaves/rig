@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/matgreaves/rig/connect"
@@ -28,12 +29,27 @@ type PostgresConfig struct {
 }
 
 // Postgres implements Type and ArtifactProvider for the "postgres" builtin
-// service type. It translates PostgresConfig into a ContainerConfig and
-// delegates all Docker lifecycle to Container.
-type Postgres struct{}
+// service type. It uses a Pool to share containers across environments,
+// providing per-test database isolation.
+type Postgres struct {
+	pool   *Pool
+	leases sync.Map // "instanceID:serviceName" → *Lease
+}
+
+// NewPostgres creates a Postgres service type backed by the given pool.
+func NewPostgres(pool *Pool) *Postgres {
+	return &Postgres{pool: pool}
+}
+
+// leaseKey returns the map key for storing/retrieving a lease.
+func leaseKey(instanceID, serviceName string) string {
+	return instanceID + ":" + serviceName
+}
 
 // Artifacts returns a DockerPull artifact for the Postgres image.
-func (Postgres) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
+// The pool manages containers, but the artifact phase still ensures the
+// image is pulled before any Acquire call.
+func (p *Postgres) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
 	image := postgresImage(params.Spec.Config)
 	return []artifact.Artifact{{
 		Key:      "docker:" + image,
@@ -41,35 +57,59 @@ func (Postgres) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
 	}}, nil
 }
 
-// Publish resolves ingress endpoints and injects standard PG attributes
-// (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD) onto each endpoint.
-func (Postgres) Publish(_ context.Context, params PublishParams) (map[string]spec.Endpoint, error) {
-	endpoints, err := PublishLocalEndpoints(params)
+// Publish acquires a lease from the pool (which creates the per-test database)
+// and returns an endpoint using the shared container's port and unique DB name.
+func (p *Postgres) Publish(ctx context.Context, params PublishParams) (map[string]spec.Endpoint, error) {
+	image := postgresImage(params.Spec.Config)
+
+	lease, err := p.pool.Acquire(ctx, image)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres publish: %w", err)
 	}
-	for name, ep := range endpoints {
-		if ep.Attributes == nil {
-			ep.Attributes = make(map[string]any)
+
+	// Store the lease for later phases.
+	p.leases.Store(leaseKey(params.InstanceID, params.ServiceName), lease)
+
+	// Build endpoints — one per ingress (typically just "default").
+	endpoints := make(map[string]spec.Endpoint, len(params.Ingresses))
+	for name, ingSpec := range params.Ingresses {
+		endpoints[name] = spec.Endpoint{
+			HostPort:   fmt.Sprintf("%s:%d", lease.Host, lease.Port),
+			Protocol:   ingSpec.Protocol,
+			Attributes: map[string]any{},
 		}
+	}
+
+	// Inject standard PG attributes.
+	for name, ep := range endpoints {
 		connect.PGHost.Set(ep.Attributes, "${HOST}")
 		connect.PGPort.Set(ep.Attributes, "${PORT}")
-		connect.PGDatabase.Set(ep.Attributes, params.ServiceName)
+		connect.PGDatabase.Set(ep.Attributes, lease.ID)
 		connect.PGUser.Set(ep.Attributes, postgresDefaultUser)
 		connect.PGPassword.Set(ep.Attributes, postgresDefaultPassword)
 		endpoints[name] = ep
 	}
+
 	return endpoints, nil
 }
 
-// ReadyCheck returns a checker that runs pg_isready inside the container
-// via docker exec. This is more reliable than a TCP dial — the postgres
-// entrypoint's initdb→restart cycle can make the port reachable before
-// postgres is actually accepting connections.
-func (Postgres) ReadyCheck(params ReadyCheckParams) ready.Checker {
+// ReadyCheck returns a checker that runs pg_isready against the shared container.
+// Since the container is already healthy from the pool, this should pass quickly.
+func (p *Postgres) ReadyCheck(params ReadyCheckParams) ready.Checker {
+	// Look up the lease to get the container name.
+	key := leaseKey(params.InstanceID, params.ServiceName)
+	v, ok := p.leases.Load(key)
+	if !ok {
+		// Fallback — shouldn't happen in normal flow.
+		return &pgReadyCheck{
+			containerName: ContainerName(params.InstanceID, params.ServiceName),
+			dbName:        params.ServiceName,
+		}
+	}
+	lease := v.(*Lease)
 	return &pgReadyCheck{
-		containerName: ContainerName(params.InstanceID, params.ServiceName),
-		dbName:        params.ServiceName,
+		containerName: lease.Data.(string),
+		dbName:        "postgres", // check against default DB for stability
 	}
 }
 
@@ -111,26 +151,26 @@ func (c *pgReadyCheck) Check(ctx context.Context, addr string) error {
 	return nil
 }
 
-// Runner builds a ContainerConfig from the Postgres defaults and delegates
-// to Container.Runner.
-func (Postgres) Runner(params StartParams) run.Runner {
-	image := postgresImage(params.Spec.Config)
-	containerCfg := ContainerConfig{
-		Image: image,
-		Env: map[string]string{
-			"POSTGRES_DB":       params.ServiceName,
-			"POSTGRES_USER":     postgresDefaultUser,
-			"POSTGRES_PASSWORD": postgresDefaultPassword,
-		},
-	}
-	cfgJSON, err := json.Marshal(containerCfg)
-	if err != nil {
-		return run.Func(func(context.Context) error {
-			return fmt.Errorf("service %q: marshal container config: %w", params.ServiceName, err)
-		})
-	}
-	params.Spec.Config = cfgJSON
-	return Container{}.Runner(params)
+// Runner returns a runner that blocks on ctx and releases the lease on exit.
+// The shared container is managed by the pool — no per-test container start.
+func (p *Postgres) Runner(params StartParams) run.Runner {
+	return run.Func(func(ctx context.Context) error {
+		key := leaseKey(params.InstanceID, params.ServiceName)
+		v, ok := p.leases.Load(key)
+		if !ok {
+			return fmt.Errorf("postgres runner: no lease for %s", key)
+		}
+		lease := v.(*Lease)
+
+		// Block until teardown.
+		<-ctx.Done()
+
+		// Release the lease (drops the per-test database).
+		p.leases.Delete(key)
+		p.pool.Release(lease)
+
+		return ctx.Err()
+	})
 }
 
 // sqlHookConfig is the Config payload for "sql" hooks.
@@ -139,20 +179,20 @@ type sqlHookConfig struct {
 }
 
 // Init handles server-side hooks for the Postgres service type.
-// Supports "sql" (runs each statement via psql) and "exec" (runs an arbitrary
-// command inside the container).
-func (Postgres) Init(ctx context.Context, params InitParams) error {
+// Supports "sql" (runs each statement via psql against the per-test DB)
+// and "exec" (runs an arbitrary command inside the shared container).
+func (p *Postgres) Init(ctx context.Context, params InitParams) error {
 	switch params.Hook.Type {
 	case "sql":
-		return postgresInitSQL(ctx, params)
+		return p.initSQL(ctx, params)
 	case "exec":
-		return Container{}.Init(ctx, params)
+		return p.initExec(ctx, params)
 	default:
 		return fmt.Errorf("postgres: unsupported hook type %q", params.Hook.Type)
 	}
 }
 
-func postgresInitSQL(ctx context.Context, params InitParams) error {
+func (p *Postgres) initSQL(ctx context.Context, params InitParams) error {
 	var cfg sqlHookConfig
 	if err := json.Unmarshal(params.Hook.Config, &cfg); err != nil {
 		return fmt.Errorf("postgres: invalid sql hook config: %w", err)
@@ -161,16 +201,47 @@ func postgresInitSQL(ctx context.Context, params InitParams) error {
 		return nil
 	}
 
-	containerName := ContainerName(params.InstanceID, params.ServiceName)
+	key := leaseKey(params.InstanceID, params.ServiceName)
+	v, ok := p.leases.Load(key)
+	if !ok {
+		return fmt.Errorf("postgres init: no lease for %s", key)
+	}
+	lease := v.(*Lease)
 
+	// The per-test database was already created by the pool's NewLease.
+	// Run each statement against it.
 	for _, stmt := range cfg.Statements {
-		cmd := []string{"psql", "-h", "localhost", "-U", postgresDefaultUser, "-d", params.ServiceName, "-v", "ON_ERROR_STOP=1", "-c", stmt}
-		if err := ExecInContainer(ctx, containerName, cmd, params.Stdout, params.Stderr); err != nil {
+		cmd := []string{
+			"psql", "-h", "localhost", "-U", postgresDefaultUser,
+			"-d", lease.ID,
+			"-v", "ON_ERROR_STOP=1",
+			"-c", stmt,
+		}
+		if err := ExecInContainer(ctx, lease.Data.(string), cmd, params.Stdout, params.Stderr); err != nil {
 			return fmt.Errorf("postgres init: statement %q: %w", stmt, err)
 		}
 	}
 
 	return nil
+}
+
+func (p *Postgres) initExec(ctx context.Context, params InitParams) error {
+	var cfg ExecHookConfig
+	if err := json.Unmarshal(params.Hook.Config, &cfg); err != nil {
+		return fmt.Errorf("postgres init: invalid exec hook config: %w", err)
+	}
+	if len(cfg.Command) == 0 {
+		return fmt.Errorf("postgres init: exec hook command is empty")
+	}
+
+	key := leaseKey(params.InstanceID, params.ServiceName)
+	v, ok := p.leases.Load(key)
+	if !ok {
+		return fmt.Errorf("postgres init exec: no lease for %s", key)
+	}
+	lease := v.(*Lease)
+
+	return ExecInContainer(ctx, lease.Data.(string), cfg.Command, params.Stdout, params.Stderr)
 }
 
 // postgresImage returns the configured image or the default.
@@ -183,3 +254,4 @@ func postgresImage(raw json.RawMessage) string {
 	}
 	return postgresDefaultImage
 }
+

@@ -27,12 +27,15 @@ func main() {
 		*rigDir = server.DefaultRigDir()
 	}
 
+	pgPool := service.NewPostgresPool(os.Getpid())
+	defer pgPool.Close()
+
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
 	reg.Register("container", service.Container{})
 	reg.Register("client", service.Client{})
-	reg.Register("postgres", service.Postgres{})
+	reg.Register("postgres", service.NewPostgres(pgPool))
 	reg.Register("temporal", service.Temporal{})
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})

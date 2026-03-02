@@ -15,6 +15,7 @@ import (
 // PublishParams provides the context needed for the publish phase.
 type PublishParams struct {
 	ServiceName string
+	InstanceID  string // environment instance ID
 	Spec        spec.Service
 	Ingresses   map[string]spec.IngressSpec
 	Ports       map[string]int              // ingress name → allocated port

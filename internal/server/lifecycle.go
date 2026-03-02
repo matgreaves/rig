@@ -131,6 +131,7 @@ func publishStep(sc *serviceContext, ports *PortAllocator) run.Runner {
 
 		endpoints, err := sc.svcType.Publish(ctx, service.PublishParams{
 			ServiceName: sc.name,
+			InstanceID:  sc.instanceID,
 			Spec:        sc.spec,
 			Ingresses:   sc.spec.Ingresses,
 			Ports:       portMap,
