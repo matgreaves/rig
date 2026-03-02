@@ -1,8 +1,6 @@
 // Package explain analyzes rigd JSONL event logs and produces concise failure
-// diagnoses. It is imported by client/ (for inline t.Log output) and cmd/rig/
-// (for the CLI explain command).
-//
-// Zero external dependencies — stdlib only.
+// diagnoses. Used by the server (for inline t.Log output) and cmd/rig (for
+// the CLI explain command).
 package explain
 
 import (

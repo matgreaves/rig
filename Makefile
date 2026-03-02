@@ -23,7 +23,7 @@ test: build
 
 # Generate explain test fixtures from real rigd runs
 fixtures: build
-	RIG_BINARY=$(CURDIR)/bin/rigd RIG_DIR=$(CURDIR)/.rig go test -tags generate ./explain/ -run TestGenerate -v
+	cd internal && RIG_BINARY=$(CURDIR)/bin/rigd RIG_DIR=$(CURDIR)/.rig go test -tags generate ./integration/ -run TestGenerateFixtures -v
 
 # Format all Go source across all modules
 fmt:

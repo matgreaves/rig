@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/matgreaves/rig/explain"
+	"github.com/matgreaves/rig/internal/explain"
 )
 
 func runExplain(args []string) error {
