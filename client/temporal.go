@@ -7,21 +7,20 @@ import "context"
 // runs `temporal server start-dev` with automatic port wiring.
 //
 // Publishes TEMPORAL_ADDRESS and TEMPORAL_NAMESPACE as endpoint attributes.
-// Each environment gets an isolated namespace assigned by the server.
 type TemporalDef struct {
-	version  string
-	egresses map[string]egressDef
-	hooks    hooksDef
+	version   string
+	namespace string
+	egresses  map[string]egressDef
+	hooks     hooksDef
 }
 
 func (*TemporalDef) rigService() {}
 
 // Temporal creates a Temporal service definition. By default uses the latest
-// known CLI version. Each environment gets an isolated namespace assigned
-// automatically by the server.
+// known CLI version and the "default" namespace.
 //
 //	rig.Temporal()
-//	rig.Temporal().Version("1.5.1")
+//	rig.Temporal().Version("1.5.1").Namespace("my-ns")
 func Temporal() *TemporalDef {
 	return &TemporalDef{}
 }
@@ -29,6 +28,12 @@ func Temporal() *TemporalDef {
 // Version overrides the Temporal CLI version (default: 1.5.1).
 func (d *TemporalDef) Version(v string) *TemporalDef {
 	d.version = v
+	return d
+}
+
+// Namespace overrides the default namespace name (default: "default").
+func (d *TemporalDef) Namespace(ns string) *TemporalDef {
+	d.namespace = ns
 	return d
 }
 

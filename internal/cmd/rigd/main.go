@@ -30,21 +30,13 @@ func main() {
 	pgPool := service.NewPostgresPool(os.Getpid())
 	defer pgPool.Close()
 
-	redisPool := service.NewRedisPool(os.Getpid())
-	defer redisPool.Close()
-
-	cacheDir := filepath.Join(*rigDir, "cache")
-	temporalPool := service.NewTemporalPool(cacheDir)
-	defer temporalPool.Close()
-
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
 	reg.Register("container", service.Container{})
 	reg.Register("client", service.Client{})
 	reg.Register("postgres", service.NewPostgres(pgPool))
-	reg.Register("redis", service.NewRedis(redisPool))
-	reg.Register("temporal", service.NewTemporal(temporalPool))
+	reg.Register("temporal", service.Temporal{})
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 

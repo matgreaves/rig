@@ -65,14 +65,14 @@ func TestDial(t *testing.T) {
 	}
 	defer c.Close()
 
-	// Verify the client works by describing the pool-assigned namespace.
+	// Verify the client works by describing the default namespace.
 	ns := temporalx.Namespace(env.Endpoint("temporal"))
 	resp, err := c.WorkflowService().DescribeNamespace(context.Background(),
 		&workflowservice.DescribeNamespaceRequest{Namespace: ns})
 	if err != nil {
 		t.Fatalf("DescribeNamespace: %v", err)
 	}
-	if got := resp.NamespaceInfo.GetName(); got != ns {
-		t.Errorf("namespace = %q, want %q", got, ns)
+	if got := resp.NamespaceInfo.GetName(); got != "default" {
+		t.Errorf("namespace = %q, want default", got)
 	}
 }

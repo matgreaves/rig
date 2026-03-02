@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
-	"sync"
+	"strconv"
 
 	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/internal/server/artifact"
@@ -15,30 +15,22 @@ import (
 
 const (
 	temporalDefaultVersion = "1.5.1"
+	temporalDefaultNS      = "default"
 )
 
 // TemporalConfig is the type-specific config for "temporal" services.
 type TemporalConfig struct {
-	Version string `json:"version,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // Temporal implements Type and ArtifactProvider for the "temporal" builtin
-// service type. It uses a Pool to share dev server processes across
-// environments, providing per-test namespace isolation.
-type Temporal struct {
-	pool   *Pool
-	leases sync.Map // "instanceID:serviceName" → *Lease
-}
-
-// NewTemporal creates a Temporal service type backed by the given pool.
-func NewTemporal(pool *Pool) *Temporal {
-	return &Temporal{pool: pool}
-}
+// service type. It downloads the Temporal CLI binary and runs
+// `temporal server start-dev` with automatic port wiring.
+type Temporal struct{}
 
 // Artifacts returns a Download artifact for the Temporal CLI binary.
-// The pool manages processes, but the artifact phase still ensures the
-// binary is downloaded before any Acquire call.
-func (t *Temporal) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
+func (Temporal) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
 	cfg := temporalConfig(params.Spec.Config)
 	url := temporalDownloadURL(cfg.Version)
 	key := temporalArtifactKey(cfg.Version)
@@ -48,76 +40,85 @@ func (t *Temporal) Artifacts(params ArtifactParams) ([]artifact.Artifact, error)
 	}}, nil
 }
 
-// Publish acquires a lease from the pool (which creates a per-test namespace)
-// and returns endpoints using the shared process's ports.
-func (t *Temporal) Publish(ctx context.Context, params PublishParams) (map[string]spec.Endpoint, error) {
-	cfg := temporalConfig(params.Spec.Config)
-
-	lease, err := t.pool.Acquire(ctx, cfg.Version)
+// Publish resolves ingress endpoints and injects Temporal connection attributes
+// (TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE) onto the default ingress.
+func (Temporal) Publish(_ context.Context, params PublishParams) (map[string]spec.Endpoint, error) {
+	endpoints, err := PublishLocalEndpoints(params)
 	if err != nil {
-		return nil, fmt.Errorf("temporal publish: %w", err)
+		return nil, err
 	}
-
-	// Store the lease for later phases.
-	t.leases.Store(leaseKey(params.InstanceID, params.ServiceName), lease)
-
-	data := lease.Data.(temporalLeaseData)
-
-	// Build endpoints for each ingress.
-	endpoints := make(map[string]spec.Endpoint, len(params.Ingresses))
-	for name, ingSpec := range params.Ingresses {
-		port := data.GRPCPort
-		if name == "ui" {
-			port = data.UIPort
-		}
-		endpoints[name] = spec.Endpoint{
-			HostPort:   fmt.Sprintf("%s:%d", lease.Host, port),
-			Protocol:   ingSpec.Protocol,
-			Attributes: map[string]any{},
-		}
-	}
-
-	// Inject Temporal connection attributes on the default ingress.
+	cfg := temporalConfig(params.Spec.Config)
 	if ep, ok := endpoints["default"]; ok {
+		if ep.Attributes == nil {
+			ep.Attributes = make(map[string]any)
+		}
 		connect.TemporalAddress.Set(ep.Attributes, "${HOSTPORT}")
-		connect.TemporalNamespace.Set(ep.Attributes, lease.ID)
+		connect.TemporalNamespace.Set(ep.Attributes, cfg.Namespace)
 		endpoints["default"] = ep
 	}
-
 	return endpoints, nil
 }
 
-// Runner returns a runner that blocks on ctx and releases the lease on exit.
-// The shared process is managed by the pool — no per-test subprocess.
-func (t *Temporal) Runner(params StartParams) run.Runner {
-	return run.Func(func(ctx context.Context) error {
-		key := leaseKey(params.InstanceID, params.ServiceName)
-		v, ok := t.leases.Load(key)
-		if !ok {
-			return fmt.Errorf("temporal runner: no lease for %s", key)
-		}
-		lease := v.(*Lease)
+// Runner looks up the downloaded Temporal CLI binary and runs
+// `temporal server start-dev` with the resolved port wiring.
+func (Temporal) Runner(params StartParams) run.Runner {
+	cfg := temporalConfig(params.Spec.Config)
 
-		// Block until teardown.
-		<-ctx.Done()
+	// Find the artifact.
+	key := temporalArtifactKey(cfg.Version)
+	out, ok := params.Artifacts[key]
+	if !ok {
+		return run.Func(func(context.Context) error {
+			return fmt.Errorf("service %q: artifact %q not resolved", params.ServiceName, key)
+		})
+	}
 
-		// Release the lease (drops the per-test namespace).
-		t.leases.Delete(key)
-		t.pool.Release(lease)
+	// Resolve gRPC and UI ports from ingresses.
+	grpcPort := 0
+	uiPort := 0
+	if ep, ok := params.Ingresses["default"]; ok {
+		grpcPort = ep.Port()
+	}
+	if ep, ok := params.Ingresses["ui"]; ok {
+		uiPort = ep.Port()
+	}
 
-		return ctx.Err()
-	})
+	args := []string{
+		"server", "start-dev",
+		"--ip", "127.0.0.1",
+		"--port", strconv.Itoa(grpcPort),
+		"--namespace", cfg.Namespace,
+		"--log-format", "json",
+	}
+	if uiPort > 0 {
+		args = append(args, "--ui-port", strconv.Itoa(uiPort))
+	} else {
+		args = append(args, "--headless")
+	}
+
+	return run.Process{
+		Name:   params.ServiceName,
+		Path:   out.Path,
+		Args:   args,
+		Env:    params.Env,
+		Stdout: params.Stdout,
+		Stderr: params.Stderr,
+	}
 }
 
 func temporalConfig(raw json.RawMessage) TemporalConfig {
 	cfg := TemporalConfig{
-		Version: temporalDefaultVersion,
+		Version:   temporalDefaultVersion,
+		Namespace: temporalDefaultNS,
 	}
 	if raw != nil {
 		json.Unmarshal(raw, &cfg)
 	}
 	if cfg.Version == "" {
 		cfg.Version = temporalDefaultVersion
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = temporalDefaultNS
 	}
 	return cfg
 }
