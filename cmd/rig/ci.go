@@ -15,6 +15,8 @@ import (
 	"github.com/matgreaves/rig/internal/explain"
 )
 
+const artifactName = "rig-artifacts"
+
 // known subcommands that ci can delegate to.
 var ciSubcommands = map[string]bool{
 	"ls": true, "explain": true, "traffic": true, "logs": true,
@@ -270,10 +272,10 @@ func ensureArtifacts(runID int64) (string, error) {
 		return "", fmt.Errorf("create cache dir: %w", err)
 	}
 	_, err = execOutput("gh", "run", "download", strconv.FormatInt(runID, 10),
-		"--name", "rig-artifacts", "--dir", dir)
+		"--name", artifactName, "--dir", dir)
 	if err != nil {
 		os.RemoveAll(dir)
-		return "", fmt.Errorf("download artifacts for run %d: %w", runID, err)
+		return "", fmt.Errorf("download %q artifact for run %d: %w\n\nEnsure your CI workflow uploads rig artifacts:\n\n  - uses: actions/upload-artifact@v4\n    if: always()\n    with:\n      name: rig-artifacts\n      path: |\n        .rig/logs/\n        .rig/tmp/", artifactName, runID, err)
 	}
 	return dir, nil
 }
