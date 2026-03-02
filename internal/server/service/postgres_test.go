@@ -9,74 +9,8 @@ import (
 	"github.com/matgreaves/rig/internal/spec"
 )
 
-func TestPostgresPublish_InjectsAttributes(t *testing.T) {
-	pg := Postgres{}
-	endpoints, err := pg.Publish(context.Background(), PublishParams{
-		ServiceName: "db",
-		Spec:        spec.Service{Type: "postgres"},
-		Ingresses: map[string]spec.IngressSpec{
-			"default": {Protocol: spec.TCP, ContainerPort: 5432},
-		},
-		Ports: map[string]int{"default": 54321},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ep := endpoints["default"]
-	for _, attr := range []string{"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD"} {
-		if _, ok := ep.Attributes[attr]; !ok {
-			t.Errorf("missing attribute %s", attr)
-		}
-	}
-	// PGHOST and PGPORT are stored as templates.
-	if ep.Attributes["PGHOST"] != "${HOST}" {
-		t.Errorf("PGHOST = %v, want ${HOST}", ep.Attributes["PGHOST"])
-	}
-	if ep.Attributes["PGPORT"] != "${PORT}" {
-		t.Errorf("PGPORT = %v, want ${PORT}", ep.Attributes["PGPORT"])
-	}
-	if ep.Attributes["PGUSER"] != "postgres" {
-		t.Errorf("PGUSER = %v, want postgres", ep.Attributes["PGUSER"])
-	}
-	if ep.Attributes["PGPASSWORD"] != "postgres" {
-		t.Errorf("PGPASSWORD = %v, want postgres", ep.Attributes["PGPASSWORD"])
-	}
-
-	// Templates should resolve correctly against the endpoint.
-	resolved, err := spec.ResolveAttributes(ep)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved["PGHOST"] != "127.0.0.1" {
-		t.Errorf("resolved PGHOST = %v, want 127.0.0.1", resolved["PGHOST"])
-	}
-	if resolved["PGPORT"] != "54321" {
-		t.Errorf("resolved PGPORT = %v, want 54321", resolved["PGPORT"])
-	}
-}
-
-func TestPostgresPublish_DatabaseIsServiceName(t *testing.T) {
-	pg := Postgres{}
-	endpoints, err := pg.Publish(context.Background(), PublishParams{
-		ServiceName: "mydb",
-		Spec:        spec.Service{Type: "postgres"},
-		Ingresses: map[string]spec.IngressSpec{
-			"default": {Protocol: spec.TCP, ContainerPort: 5432},
-		},
-		Ports: map[string]int{"default": 54321},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if got := endpoints["default"].Attributes["PGDATABASE"]; got != "mydb" {
-		t.Errorf("PGDATABASE = %v, want mydb", got)
-	}
-}
-
 func TestPostgresArtifacts_DefaultImage(t *testing.T) {
-	pg := Postgres{}
+	pg := NewPostgres(NewPostgresPool(99999))
 	arts, err := pg.Artifacts(ArtifactParams{
 		ServiceName: "db",
 		Spec:        spec.Service{Type: "postgres"},
@@ -94,7 +28,7 @@ func TestPostgresArtifacts_DefaultImage(t *testing.T) {
 
 func TestPostgresArtifacts_CustomImage(t *testing.T) {
 	cfg, _ := json.Marshal(PostgresConfig{Image: "postgres:15"})
-	pg := Postgres{}
+	pg := NewPostgres(NewPostgresPool(99999))
 	arts, err := pg.Artifacts(ArtifactParams{
 		ServiceName: "db",
 		Spec:        spec.Service{Type: "postgres", Config: cfg},
@@ -111,7 +45,7 @@ func TestPostgresArtifacts_CustomImage(t *testing.T) {
 }
 
 func TestPostgresInit_UnsupportedHookType(t *testing.T) {
-	pg := Postgres{}
+	pg := NewPostgres(NewPostgresPool(99999))
 	err := pg.Init(context.Background(), InitParams{
 		ServiceName: "db",
 		Hook: &spec.HookSpec{
@@ -128,7 +62,7 @@ func TestPostgresInit_UnsupportedHookType(t *testing.T) {
 }
 
 func TestPostgresInit_NoStatements(t *testing.T) {
-	pg := Postgres{}
+	pg := NewPostgres(NewPostgresPool(99999))
 	err := pg.Init(context.Background(), InitParams{
 		ServiceName: "db",
 		Hook: &spec.HookSpec{

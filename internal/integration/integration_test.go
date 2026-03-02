@@ -68,12 +68,14 @@ func TestMain(m *testing.M) {
 		dir = parent
 	}
 
+	pgPool := service.NewPostgresPool(os.Getpid())
+
 	reg := service.NewRegistry()
 	reg.Register("process", service.Process{})
 	reg.Register("go", service.Go{})
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
-	reg.Register("postgres", service.Postgres{})
+	reg.Register("postgres", service.NewPostgres(pgPool))
 	reg.Register("temporal", service.Temporal{})
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
@@ -98,6 +100,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 
 	ts.Close()
+	pgPool.Close()
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
 }
@@ -378,8 +381,8 @@ func TestUp(t *testing.T) {
 		conn.Close()
 
 		// Verify endpoint attributes.
-		if got := ep.Attr("PGDATABASE"); got != "db" {
-			t.Errorf("PGDATABASE = %q, want db", got)
+		if got := ep.Attr("PGDATABASE"); got == "" {
+			t.Error("PGDATABASE is empty")
 		}
 		if got := ep.Attr("PGUSER"); got != "postgres" {
 			t.Errorf("PGUSER = %q, want postgres", got)
@@ -393,6 +396,57 @@ func TestUp(t *testing.T) {
 		if got := ep.Attr("PGPORT"); got == "" {
 			t.Error("PGPORT is empty")
 		}
+	})
+
+	t.Run("PostgresSharedContainer", func(t *testing.T) {
+		t.Parallel()
+
+		// Two concurrent Postgres envs should share a single container
+		// but get isolated databases with different data.
+		env1 := rig.Up(t, rig.Services{
+			"db": rig.Postgres().InitSQL(
+				"CREATE TABLE items (id INT PRIMARY KEY, name TEXT)",
+				"INSERT INTO items VALUES (1, 'from-env1')",
+			),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		env2 := rig.Up(t, rig.Services{
+			"db": rig.Postgres().InitSQL(
+				"CREATE TABLE items (id INT PRIMARY KEY, name TEXT)",
+				"INSERT INTO items VALUES (1, 'from-env2')",
+			),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep1 := env1.Endpoint("db")
+		ep2 := env2.Endpoint("db")
+
+		// Isolated databases: different PGDATABASE values.
+		db1 := ep1.Attr("PGDATABASE")
+		db2 := ep2.Attr("PGDATABASE")
+		if db1 == db2 {
+			t.Fatalf("expected different databases, both got %s", db1)
+		}
+		if !strings.HasPrefix(db1, "rig_") {
+			t.Errorf("db1 = %q, want rig_* prefix", db1)
+		}
+		if !strings.HasPrefix(db2, "rig_") {
+			t.Errorf("db2 = %q, want rig_* prefix", db2)
+		}
+
+		// Both environments should be reachable.
+		conn1, err := net.DialTimeout("tcp", ep1.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env1 dial: %v", err)
+		}
+		conn1.Close()
+
+		conn2, err := net.DialTimeout("tcp", ep2.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env2 dial: %v", err)
+		}
+		conn2.Close()
+
+		t.Logf("shared container: db1=%s, db2=%s", db1, db2)
 	})
 
 	t.Run("Temporal", func(t *testing.T) {
