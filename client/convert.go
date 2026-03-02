@@ -46,6 +46,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return customToSpec(d, handlers)
 	case *TemporalDef:
 		return temporalToSpec(d, handlers)
+	case *RedisDef:
+		return redisToSpec(d, handlers)
 	default:
 		return specService{}, fmt.Errorf("unknown service type: %T", def)
 	}
@@ -302,6 +304,28 @@ func temporalToSpec(d *TemporalDef, handlers map[string]hookFunc) (specService, 
 		Ingresses: map[string]specIngressSpec{
 			"default": {Protocol: GRPC},
 			"ui":      {Protocol: HTTP},
+		},
+		Egresses: egressesToSpec(d.egresses),
+		Hooks:    hooks,
+	}, nil
+}
+
+func redisToSpec(d *RedisDef, handlers map[string]hookFunc) (specService, error) {
+	var cfg json.RawMessage
+	if d.image != "" {
+		cfg, _ = json.Marshal(map[string]string{"image": d.image})
+	}
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return specService{}, err
+	}
+
+	return specService{
+		Type:   "redis",
+		Config: cfg,
+		Ingresses: map[string]specIngressSpec{
+			"default": {Protocol: TCP, ContainerPort: 6379},
 		},
 		Egresses: egressesToSpec(d.egresses),
 		Hooks:    hooks,

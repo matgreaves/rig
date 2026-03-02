@@ -69,6 +69,7 @@ func TestMain(m *testing.M) {
 	}
 
 	pgPool := service.NewPostgresPool(os.Getpid())
+	redisPool := service.NewRedisPool(os.Getpid())
 
 	cacheDir := filepath.Join(dir, "..", ".rig", "cache")
 	temporalPool := service.NewTemporalPool(cacheDir)
@@ -79,6 +80,7 @@ func TestMain(m *testing.M) {
 	reg.Register("client", service.Client{})
 	reg.Register("container", service.Container{})
 	reg.Register("postgres", service.NewPostgres(pgPool))
+	reg.Register("redis", service.NewRedis(redisPool))
 	reg.Register("temporal", service.NewTemporal(temporalPool))
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
@@ -104,6 +106,7 @@ func TestMain(m *testing.M) {
 
 	ts.Close()
 	temporalPool.Close()
+	redisPool.Close()
 	pgPool.Close()
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
@@ -532,6 +535,71 @@ func TestUp(t *testing.T) {
 		conn2.Close()
 
 		t.Logf("shared server: ns1=%s, ns2=%s", ns1, ns2)
+	})
+
+	t.Run("Redis", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"cache": rig.Redis(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep := env.Endpoint("cache")
+
+		// Verify TCP connectivity.
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("redis dial: %v", err)
+		}
+		conn.Close()
+
+		// Verify endpoint attributes.
+		redisURL := ep.Attr("REDIS_URL")
+		if redisURL == "" {
+			t.Error("REDIS_URL is empty")
+		}
+		if !strings.HasPrefix(redisURL, "redis://") {
+			t.Errorf("REDIS_URL = %q, want redis:// prefix", redisURL)
+		}
+	})
+
+	t.Run("RedisSharedContainer", func(t *testing.T) {
+		t.Parallel()
+
+		// Two concurrent Redis envs should share a single container
+		// but get isolated databases with different data.
+		env1 := rig.Up(t, rig.Services{
+			"cache": rig.Redis(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		env2 := rig.Up(t, rig.Services{
+			"cache": rig.Redis(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep1 := env1.Endpoint("cache")
+		ep2 := env2.Endpoint("cache")
+
+		// Isolated databases: different REDIS_URL values.
+		url1 := ep1.Attr("REDIS_URL")
+		url2 := ep2.Attr("REDIS_URL")
+		if url1 == url2 {
+			t.Fatalf("expected different REDIS_URLs, both got %s", url1)
+		}
+
+		// Both environments should be reachable.
+		conn1, err := net.DialTimeout("tcp", ep1.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env1 dial: %v", err)
+		}
+		conn1.Close()
+
+		conn2, err := net.DialTimeout("tcp", ep2.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env2 dial: %v", err)
+		}
+		conn2.Close()
+
+		t.Logf("shared container: url1=%s, url2=%s", url1, url2)
 	})
 
 	t.Run("PostgresInitSQL_BadSQL", func(t *testing.T) {

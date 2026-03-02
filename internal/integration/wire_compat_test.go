@@ -103,6 +103,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 			Image("postgres:15").
 			InitSQL("CREATE TABLE t (id INT)", "INSERT INTO t VALUES (1)"),
 		"mytemporal": rig.Temporal().Version("1.5.1"),
+		"myredis":    rig.Redis().Image("redis:6-alpine"),
 		"mycustom":   rig.Custom("mytype", map[string]any{"key": "val"}).Args("-x"),
 		"myfunc":     rig.Func(func(ctx context.Context) error { return nil }),
 	}, rig.WithServer(ts.URL), rig.WithTimeout(5*time.Second))
@@ -298,6 +299,25 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		}
 		if svc.Ingresses["ui"].Protocol != spec.HTTP {
 			t.Errorf("mytemporal ui protocol = %q, want http", svc.Ingresses["ui"].Protocol)
+		}
+	}
+
+	// --- Redis service ---
+	{
+		svc := env.Services["myredis"]
+		if svc.Type != "redis" {
+			t.Errorf("myredis type = %q, want redis", svc.Type)
+		}
+		var cfg map[string]string
+		json.Unmarshal(svc.Config, &cfg)
+		if cfg["image"] != "redis:6-alpine" {
+			t.Errorf("myredis config.image = %q, want redis:6-alpine", cfg["image"])
+		}
+		if _, ok := svc.Ingresses["default"]; !ok {
+			t.Error("myredis missing default ingress")
+		}
+		if svc.Ingresses["default"].Protocol != spec.TCP {
+			t.Errorf("myredis default protocol = %q, want tcp", svc.Ingresses["default"].Protocol)
 		}
 	}
 
