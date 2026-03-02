@@ -110,13 +110,22 @@ rig.Postgres().InitSQLDir("./migrations")
 rig.Postgres().InitSQL("CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT)")
 ```
 
+### Redis
+
+Managed Redis container with automatic database isolation.
+
+```go
+rig.Redis()
+rig.Redis().Image("redis:6-alpine")
+```
+
 ### Temporal
 
 Managed Temporal dev server. Downloads the CLI binary on first use.
 
 ```go
 rig.Temporal()
-rig.Temporal().Version("1.5.1").Namespace("my-ns")
+rig.Temporal().Version("1.5.1")
 ```
 
 ### Pre-built binary
@@ -135,7 +144,7 @@ Services declare dependencies with `.Egress()`. Rig resolves the graph, starts s
 ```go
 rig.Services{
     "db":       rig.Postgres(),
-    "cache":    rig.Container("redis:7").Port(6379),
+    "cache":    rig.Redis(),
     "api":      rig.Go("./cmd/api").Egress("db").Egress("cache"),
     "worker":   rig.Go("./cmd/worker").Egress("db").Egress("temporal").NoIngress(),
     "temporal": rig.Temporal(),
@@ -165,10 +174,14 @@ dsn := connect.PostgresDSN(ep) // "postgres://postgres:postgres@127.0.0.1:54321/
 host := connect.PGHost.MustGet(ep)
 port := connect.PGPort.MustGet(ep)
 
+// Redis
+ep := env.Endpoint("cache")
+url := connect.RedisURL.MustGet(ep)            // "redis://127.0.0.1:63421/0"
+
 // Temporal
 ep := env.Endpoint("temporal")
 addr := connect.TemporalAddress.MustGet(ep)   // "127.0.0.1:7233"
-ns := connect.TemporalNamespace.MustGet(ep)    // "default"
+ns := connect.TemporalNamespace.MustGet(ep)    // "rig_ns_0"
 ```
 
 ## Client helpers
@@ -192,6 +205,15 @@ import "github.com/matgreaves/rig/connect/pgx"
 
 pool, err := pgx.Connect(ctx, env.Endpoint("db"))
 db, err := pgx.OpenDB(env.Endpoint("db"))  // *sql.DB
+```
+
+### Redis — `connect/redisx`
+
+```go
+import "github.com/matgreaves/rig/connect/redisx"
+
+client := redisx.Connect(env.Endpoint("cache"))
+client.Set(ctx, "key", "value", 0)
 ```
 
 ### Temporal — `connect/temporalx`
@@ -325,6 +347,7 @@ rig traffic $(rig ls --failed -q -n1)        # most recent failure
 | Root | `github.com/matgreaves/rig` | SDK + shared types. Zero deps. |
 | `connect/httpx` | `github.com/matgreaves/rig/connect/httpx` | HTTP client/server helpers |
 | `connect/pgx` | `github.com/matgreaves/rig/connect/pgx` | Postgres client (`pgxpool`, `*sql.DB`) |
+| `connect/redisx` | `github.com/matgreaves/rig/connect/redisx` | Redis client (`go-redis/v9`) |
 | `connect/temporalx` | `github.com/matgreaves/rig/connect/temporalx` | Temporal client helper |
 
 Server internals live in `internal/` and cannot be imported.

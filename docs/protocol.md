@@ -160,7 +160,7 @@ The JSON body sent to `POST /environments`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `temporal`, `client`, `custom` |
+| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `temporal`, `client`, `custom` |
 | `config` | object | No | Type-specific configuration as raw JSON |
 | `args` | string[] | No | Command-line arguments. Supports `${VAR}` template expansion. |
 | `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, the service has no ingresses (valid for workers). SDK builders typically add a default HTTP ingress. |
@@ -244,12 +244,19 @@ Each service type reads type-specific fields from `config`:
 - Container env: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - Supported hooks: `"sql"` (config: `{"statements": [...]}`), `"exec"` (config: `{"command": [...]}`)
 
-**`temporal`**: `{"version": "1.5.1", "namespace": "default"}`
+**`redis`**: `{"image": "redis:7-alpine"}`
+- `image` (optional): Docker image. Default `redis:7-alpine`.
+- Default ingress: single TCP on port 6379
+- Health check: `redis-cli PING` via `docker exec`
+- Pooled: shares a single container across test environments; each environment gets an isolated database number (0-15)
+- Published attributes: `REDIS_URL` (`redis://${HOST}:${PORT}/{db}`)
+
+**`temporal`**: `{"version": "1.5.1"}`
 - `version` (optional): Temporal CLI version. Default `1.5.1`.
-- `namespace` (optional): default namespace. Default `"default"`.
 - Default ingresses: `"default"` (gRPC) + `"ui"` (HTTP)
 - CLI download URL: `https://github.com/temporalio/cli/releases/download/v{version}/temporal_cli_{version}_{os}_{arch}.tar.gz`
-- Runs: `temporal server start-dev --ip 127.0.0.1 --port {port} --namespace {ns} --log-format json [--ui-port {uiPort} | --headless]`
+- Pooled: shares a single dev server process across test environments; each environment gets an isolated namespace
+- Runs: `temporal server start-dev --ip 127.0.0.1 --port {port} --log-format json [--ui-port {uiPort} | --headless]`
 
 **`client`**: config: `{"start_handler": "handler_name"}`. Server allocates ports and runs health checks normally; only the `start` step is delegated to a client-side function via callback.
 
@@ -298,6 +305,7 @@ Well-known attributes published by built-in service types:
 | Service | Attributes | Template forms |
 |---------|-----------|---------------|
 | Postgres | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `PGHOST="${HOST}"`, `PGPORT="${PORT}"` |
+| Redis | `REDIS_URL` | `REDIS_URL="redis://${HOST}:${PORT}/{db}"` |
 | Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` | `TEMPORAL_ADDRESS="${HOSTPORT}"` |
 
 ---
