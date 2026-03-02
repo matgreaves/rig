@@ -2,9 +2,9 @@
 
 // This file generates JSONL test fixtures by running real rigd environments.
 // Run with: make fixtures
-// Or manually: make build && RIG_BINARY=./bin/rigd go test -tags generate ./explain/ -run TestGenerate -v
+// Or manually: make build && cd internal && RIG_BINARY=../bin/rigd go test -tags generate ./integration/ -run TestGenerateFixtures -v
 
-package explain
+package integration_test
 
 import (
 	"context"
@@ -21,12 +21,12 @@ import (
 	"github.com/matgreaves/rig/connect/httpx"
 )
 
-func TestGenerate(t *testing.T) {
+func TestGenerateFixtures(t *testing.T) {
 	if os.Getenv("RIG_BINARY") == "" {
 		t.Skip("RIG_BINARY not set — run 'make build' first")
 	}
 
-	testdataDir := filepath.Join("testdata")
+	testdataDir := filepath.Join("..", "explain", "testdata")
 	if err := os.MkdirAll(testdataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func generateAssertionFailure(t *testing.T, outDir string) {
 
 	// Register copy BEFORE rig.Up so it runs AFTER rig's cleanup (LIFO).
 	t.Cleanup(func() {
-		copyLogFile(t, outDir, "assertion_failure")
+		copyFixtureLogFile(t, outDir, "assertion_failure")
 	})
 
 	svc := rig.Func(func(ctx context.Context) error {
@@ -90,7 +90,7 @@ func generateServiceCrash(t *testing.T, outDir string) {
 
 	// Register copy BEFORE rig.TryUp so it runs AFTER rig's cleanup (LIFO).
 	t.Cleanup(func() {
-		copyLogFile(t, outDir, "service_crash")
+		copyFixtureLogFile(t, outDir, "service_crash")
 	})
 
 	svc := rig.Func(func(ctx context.Context) error {
@@ -112,7 +112,7 @@ func generatePassed(t *testing.T, outDir string) {
 
 	// Register copy BEFORE rig.Up so it runs AFTER rig's cleanup (LIFO).
 	t.Cleanup(func() {
-		copyLogFile(t, outDir, "passed")
+		copyFixtureLogFile(t, outDir, "passed")
 	})
 
 	svc := rig.Func(func(ctx context.Context) error {
@@ -142,9 +142,9 @@ func generatePassed(t *testing.T, outDir string) {
 	t.Logf("GET /hello: %d %s", resp.StatusCode, body)
 }
 
-// copyLogFile finds the most recent log file from the rig logs directory
+// copyFixtureLogFile finds the most recent log file from the rig logs directory
 // and copies it to outDir/name.jsonl.
-func copyLogFile(t *testing.T, outDir, name string) {
+func copyFixtureLogFile(t *testing.T, outDir, name string) {
 	t.Helper()
 
 	rigDir := os.Getenv("RIG_DIR")
@@ -189,7 +189,7 @@ func copyLogFile(t *testing.T, outDir, name string) {
 		if hdr.Type != "log.header" {
 			continue
 		}
-		if !matchesScenario(hdr.Env, name) {
+		if !matchesFixtureScenario(hdr.Env, name) {
 			continue
 		}
 		if modTime > bestTime {
@@ -217,8 +217,8 @@ func copyLogFile(t *testing.T, outDir, name string) {
 	t.Logf("wrote fixture: %s (%d bytes)", dst, len(src))
 }
 
-// matchesScenario checks if the environment name from the header matches
+// matchesFixtureScenario checks if the environment name from the header matches
 // our expected scenario name.
-func matchesScenario(envName, scenario string) bool {
+func matchesFixtureScenario(envName, scenario string) bool {
 	return strings.Contains(strings.ToLower(envName), strings.ToLower(scenario))
 }

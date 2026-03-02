@@ -16,12 +16,13 @@ If you need to run tests for a single module with `go test` directly (e.g. `cd e
 
 ### Sub-modules
 
-The project has five Go modules:
+The project has six Go modules:
 
 | Module | Path | Purpose |
 |--------|------|---------|
 | `github.com/matgreaves/rig` | `go.mod` | Root module — zero external deps. Contains `client/`, `connect/`, `connect/httpx/` |
-| `github.com/matgreaves/rig/internal` | `internal/go.mod` | Server internals — heavy deps (Docker SDK, gRPC, etc). Contains `spec/`, `server/`, `cmd/rigd/`, `testdata/`, integration tests |
+| `github.com/matgreaves/rig/internal` | `internal/go.mod` | Server internals — heavy deps (Docker SDK, gRPC, etc). Contains `spec/`, `server/`, `explain/`, `cmd/rigd/`, `testdata/`, integration tests |
+| `github.com/matgreaves/rig/cmd/rig` | `cmd/rig/go.mod` | CLI tool — depends on `internal` for explain engine |
 | `github.com/matgreaves/rig/connect/temporalx` | `connect/temporalx/go.mod` | Temporal client helper — isolates Temporal SDK dependency |
 | `github.com/matgreaves/rig/connect/pgx` | `connect/pgx/go.mod` | Postgres client helper — isolates pgx/v5 dependency |
 | `github.com/matgreaves/rig/examples` | `examples/go.mod` | Example apps and integration tests |
@@ -31,13 +32,14 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `examples
 ## Project structure
 
 - `client/` — Go client SDK (`rig.Up`, `rig.TryUp`, `rig.EnsureServer`, service builders)
-- `explain/` — failure diagnosis engine (analyzes JSONL event logs, used by client/ and cmd/rig/)
+- `cmd/rig/` — CLI tool for inspecting test logs and diagnosing failures
 - `connect/` — zero-dependency shared types (`Endpoint`, `Wiring`, `ParseWiring`)
 - `connect/httpx/` — HTTP client/server helpers built on rig endpoints
 - `connect/temporalx/` — Temporal client helper (sub-module)
 - `connect/pgx/` — Postgres client helper (sub-module)
 - `examples/echo/` — minimal example: single Go HTTP service + test
 - `examples/orderflow/` — full example: Postgres + Temporal + HTTP API
+- `internal/explain/` — failure diagnosis engine (analyzes JSONL event logs)
 - `internal/spec/` — shared spec types and validation
 - `internal/server/` — rigd server: orchestrator, lifecycle, health checks, artifact cache, proxy
 - `internal/cmd/rigd/` — rigd CLI entrypoint

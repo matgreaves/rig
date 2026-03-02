@@ -213,12 +213,12 @@ make test    # Build + run all tests
 make clean   # Remove artifacts
 ```
 
-Five Go modules: root `go.mod`, `internal/go.mod`, `connect/temporalx/go.mod`, `connect/pgx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
+Six Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/temporalx/go.mod`, `connect/pgx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
 
 ## Key files
 
-- `explain/explain.go` — failure analysis engine (`Analyze`, `AnalyzeFile`)
-- `explain/format.go` — output formatters (`JSON`, `Pretty`, `Condensed`)
+- `internal/explain/explain.go` — failure analysis engine (`Analyze`, `AnalyzeFile`)
+- `internal/explain/format.go` — output formatters (`JSON`, `Pretty`, `Condensed`)
 - `client/rig.go` — `Up`, `TryUp`, `EnsureServer`, core types
 - `client/services.go` — `Go`, `Func`, `Process`, `Custom` builders
 - `client/container.go` — `Container` builder

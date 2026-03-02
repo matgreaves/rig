@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/matgreaves/rig/explain"
+	"github.com/matgreaves/rig/internal/explain"
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/server/service"
 	"github.com/matgreaves/rig/internal/spec"

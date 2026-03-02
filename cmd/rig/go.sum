@@ -1,2 +1,2 @@
-github.com/matgreaves/rig/explain v0.0.0-20260228112517-cb702501901c h1:WU/os/Vm1dWtHnC7Du4SRdkPsaATq/ViLNHfN9Yjh14=
-github.com/matgreaves/rig/explain v0.0.0-20260228112517-cb702501901c/go.mod h1:ZcTaxcxmIgsvcJbvlsh1ALNIRZGnU87nw8aurJR+1ko=
+github.com/matgreaves/rig/internal v0.0.0-20260302030002-fb62dea7087c h1:x3gNtySkTXaRDrxIM5ohjOBnXaTWZfvUh+J6a8e82XM=
+github.com/matgreaves/rig/internal v0.0.0-20260302030002-fb62dea7087c/go.mod h1:r+5teiFrcBmEaslB8BtLyzYDTL4gvAvlIfk2125bFwM=
