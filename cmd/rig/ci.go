@@ -29,6 +29,11 @@ func runCi(args []string) error {
 
 	target, subcmd, subArgs, flags := parseCiArgs(args)
 
+	// Fast path: forward --help to subcommand without downloading artifacts.
+	if subcmd != "" && hasHelpFlag(subArgs) {
+		return dispatchSubcommand(subcmd, subArgs, "")
+	}
+
 	// Resolve target to a run ID.
 	runID, err := resolveRunID(target)
 	if err != nil {
@@ -162,8 +167,19 @@ Examples:
 `)
 }
 
+func hasHelpFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
 func dispatchSubcommand(subcmd string, args []string, ciLogDir string) error {
-	os.Setenv("RIG_LOGS", ciLogDir)
+	if ciLogDir != "" {
+		os.Setenv("RIG_LOGS", ciLogDir)
+	}
 	switch subcmd {
 	case "ls":
 		return runLs(args)
