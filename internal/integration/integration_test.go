@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	rig "github.com/matgreaves/rig/client"
 	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/connect/httpx"
@@ -638,29 +641,35 @@ func TestUp(t *testing.T) {
 			t.Errorf("S3_BUCKET = %q, want rig-* prefix", s3Bucket)
 		}
 
-		// Verify we can PUT and GET an object via HTTP.
-		putURL := fmt.Sprintf("%s/%s/test-object.txt", s3Endpoint, s3Bucket)
-		putReq, _ := http.NewRequest(http.MethodPut, putURL, strings.NewReader("hello s3"))
-		putResp, err := http.DefaultClient.Do(putReq)
+		// Build S3 client from endpoint attributes (same pattern as s3x.Connect).
+		s3Client := s3.New(s3.Options{
+			BaseEndpoint: aws.String(s3Endpoint),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(ep.Attr("AWS_ACCESS_KEY_ID"), ep.Attr("AWS_SECRET_ACCESS_KEY"), ""),
+			UsePathStyle: true,
+		})
+
+		// Verify we can PutObject and GetObject.
+		_, err = s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+			Bucket: aws.String(s3Bucket),
+			Key:    aws.String("test-object.txt"),
+			Body:   strings.NewReader("hello s3"),
+		})
 		if err != nil {
-			t.Fatalf("PUT object: %v", err)
-		}
-		putResp.Body.Close()
-		if putResp.StatusCode >= 300 {
-			t.Fatalf("PUT object: status %d", putResp.StatusCode)
+			t.Fatalf("PutObject: %v", err)
 		}
 
-		getResp, err := http.Get(putURL)
+		getResult, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+			Bucket: aws.String(s3Bucket),
+			Key:    aws.String("test-object.txt"),
+		})
 		if err != nil {
-			t.Fatalf("GET object: %v", err)
+			t.Fatalf("GetObject: %v", err)
 		}
-		defer getResp.Body.Close()
-		if getResp.StatusCode != http.StatusOK {
-			t.Fatalf("GET object: status %d, want 200", getResp.StatusCode)
-		}
-		body, _ := io.ReadAll(getResp.Body)
+		defer getResult.Body.Close()
+		body, _ := io.ReadAll(getResult.Body)
 		if string(body) != "hello s3" {
-			t.Errorf("GET object body = %q, want %q", body, "hello s3")
+			t.Errorf("GetObject body = %q, want %q", body, "hello s3")
 		}
 	})
 

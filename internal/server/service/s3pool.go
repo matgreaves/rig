@@ -119,7 +119,8 @@ func (b *s3Backend) Start(ctx context.Context) (string, int, error) {
 
 	// Create a reusable S3 client for bucket management.
 	// SeaweedFS with -s3.iam=false doesn't check credentials, but the
-	// AWS SDK requires non-empty values.
+	// AWS SDK requires non-empty values. BaseEndpoint overrides the
+	// default S3 endpoint; UsePathStyle prevents bucket-subdomain rewriting.
 	b.s3Client = s3.New(s3.Options{
 		BaseEndpoint: aws.String(fmt.Sprintf("http://127.0.0.1:%d", port)),
 		Region:       "us-east-1",

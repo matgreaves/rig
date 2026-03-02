@@ -33,6 +33,8 @@ func Bucket(ep connect.Endpoint) string {
 // Connect creates an S3 client from a rig endpoint.
 // It reads S3_ENDPOINT, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY from
 // the endpoint attributes and configures the client with path-style access.
+// BaseEndpoint overrides the default S3 endpoint URL; UsePathStyle prevents
+// the SDK from rewriting it with bucket-subdomain addressing.
 func Connect(ep connect.Endpoint) *s3.Client {
 	endpoint := URL(ep)
 	accessKey, _ := connect.S3AccessKeyID.Get(ep)
