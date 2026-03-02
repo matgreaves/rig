@@ -58,6 +58,14 @@ var (
 	RedisURL = Attr[string]("REDIS_URL")
 )
 
+// Well-known S3 attributes.
+var (
+	S3Endpoint       = Attr[string]("S3_ENDPOINT")
+	S3Bucket         = Attr[string]("S3_BUCKET")
+	S3AccessKeyID    = Attr[string]("AWS_ACCESS_KEY_ID")
+	S3SecretAccessKey = Attr[string]("AWS_SECRET_ACCESS_KEY")
+)
+
 // Cross-cutting attributes.
 var (
 	// Secure indicates the endpoint requires TLS or equivalent.

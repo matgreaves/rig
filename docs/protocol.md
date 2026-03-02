@@ -160,7 +160,7 @@ The JSON body sent to `POST /environments`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `temporal`, `client`, `custom` |
+| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `s3`, `temporal`, `client`, `custom` |
 | `config` | object | No | Type-specific configuration as raw JSON |
 | `args` | string[] | No | Command-line arguments. Supports `${VAR}` template expansion. |
 | `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, the service has no ingresses (valid for workers). SDK builders typically add a default HTTP ingress. |
@@ -251,6 +251,12 @@ Each service type reads type-specific fields from `config`:
 - Pooled: shares a single container across test environments; each environment gets an isolated database number (0-15)
 - Published attributes: `REDIS_URL` (`redis://${HOST}:${PORT}/{db}`)
 
+**`s3`**: no config fields
+- Default ingress: single TCP on port 8333
+- Backed by SeaweedFS (`chrislusf/seaweedfs:4.13`) in S3-compatible mode
+- Pooled: shares a single container across test environments; each environment gets an isolated bucket
+- Published attributes: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
+
 **`temporal`**: `{"version": "1.5.1"}`
 - `version` (optional): Temporal CLI version. Default `1.5.1`.
 - Default ingresses: `"default"` (gRPC) + `"ui"` (HTTP)
@@ -306,6 +312,7 @@ Well-known attributes published by built-in service types:
 |---------|-----------|---------------|
 | Postgres | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `PGHOST="${HOST}"`, `PGPORT="${PORT}"` |
 | Redis | `REDIS_URL` | `REDIS_URL="redis://${HOST}:${PORT}/{db}"` |
+| S3 | `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `S3_ENDPOINT="http://${HOST}:${PORT}"` |
 | Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` | `TEMPORAL_ADDRESS="${HOSTPORT}"` |
 
 ---

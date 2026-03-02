@@ -5,7 +5,7 @@ import "encoding/json"
 // Service defines a single service within an environment.
 type Service struct {
 	// Type identifies how to start the service (e.g. "container", "process",
-	// "go", "postgres", "temporal", "redis").
+	// "go", "postgres", "temporal", "redis", "s3").
 	Type string `json:"type"`
 
 	// Config holds type-specific configuration as raw JSON.

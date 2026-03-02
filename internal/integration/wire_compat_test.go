@@ -60,6 +60,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 				},
 				"mycustom": map[string]any{"default": map[string]any{"host": "127.0.0.1", "port": 10007, "protocol": "http"}},
 				"myfunc":   map[string]any{"default": map[string]any{"host": "127.0.0.1", "port": 10008, "protocol": "http"}},
+				"mys3":     map[string]any{"default": map[string]any{"host": "127.0.0.1", "port": 10009, "protocol": "tcp"}},
 			}
 			data, _ := json.Marshal(map[string]any{
 				"type":      "environment.up",
@@ -104,6 +105,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 			InitSQL("CREATE TABLE t (id INT)", "INSERT INTO t VALUES (1)"),
 		"mytemporal": rig.Temporal().Version("1.5.1"),
 		"myredis":    rig.Redis().Image("redis:6-alpine"),
+		"mys3":       rig.S3(),
 		"mycustom":   rig.Custom("mytype", map[string]any{"key": "val"}).Args("-x"),
 		"myfunc":     rig.Func(func(ctx context.Context) error { return nil }),
 	}, rig.WithServer(ts.URL), rig.WithTimeout(5*time.Second))
@@ -129,7 +131,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		t.Error("observe flag lost in round-trip")
 	}
 
-	expectedServices := []string{"mygo", "myprocess", "mycontainer", "mypostgres", "mytemporal", "mycustom", "myfunc"}
+	expectedServices := []string{"mygo", "myprocess", "mycontainer", "mypostgres", "mytemporal", "mycustom", "myfunc", "mys3"}
 	for _, name := range expectedServices {
 		if _, ok := env.Services[name]; !ok {
 			t.Errorf("service %q missing from decoded spec", name)
@@ -318,6 +320,23 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		}
 		if svc.Ingresses["default"].Protocol != spec.TCP {
 			t.Errorf("myredis default protocol = %q, want tcp", svc.Ingresses["default"].Protocol)
+		}
+	}
+
+	// --- S3 service ---
+	{
+		svc := env.Services["mys3"]
+		if svc.Type != "s3" {
+			t.Errorf("mys3 type = %q, want s3", svc.Type)
+		}
+		if _, ok := svc.Ingresses["default"]; !ok {
+			t.Error("mys3 missing default ingress")
+		}
+		if svc.Ingresses["default"].Protocol != spec.TCP {
+			t.Errorf("mys3 default protocol = %q, want tcp", svc.Ingresses["default"].Protocol)
+		}
+		if svc.Ingresses["default"].ContainerPort != 8333 {
+			t.Errorf("mys3 container_port = %d, want 8333", svc.Ingresses["default"].ContainerPort)
 		}
 	}
 
