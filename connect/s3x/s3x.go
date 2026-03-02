@@ -32,18 +32,22 @@ func Bucket(ep connect.Endpoint) string {
 
 // Connect creates an S3 client from a rig endpoint.
 // It reads S3_ENDPOINT, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY from
-// the endpoint attributes and configures the client with path-style access.
-// BaseEndpoint overrides the default S3 endpoint URL; UsePathStyle prevents
-// the SDK from rewriting it with bucket-subdomain addressing.
+// the endpoint attributes. When S3_ENDPOINT is set (custom backend like
+// SeaweedFS or MinIO), path-style access is enabled automatically since
+// virtual-hosted addressing requires wildcard DNS.
 func Connect(ep connect.Endpoint) *s3.Client {
-	endpoint := URL(ep)
+	endpoint, hasEndpoint := connect.S3Endpoint.Get(ep)
 	accessKey, _ := connect.S3AccessKeyID.Get(ep)
 	secretKey, _ := connect.S3SecretAccessKey.Get(ep)
 
-	return s3.New(s3.Options{
-		BaseEndpoint: aws.String(endpoint),
-		Region:       "us-east-1",
-		Credentials:  credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
-		UsePathStyle: true,
-	})
+	opts := s3.Options{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+	}
+	if hasEndpoint {
+		opts.BaseEndpoint = aws.String(endpoint)
+		opts.UsePathStyle = true
+	}
+
+	return s3.New(opts)
 }
