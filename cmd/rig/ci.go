@@ -351,10 +351,11 @@ func fetchRunInfo(runID int64) (*ciRunInfo, error) {
 // --- Summary ---
 
 type ciSummaryJSON struct {
-	Run       ciRunJSON        `json:"run"`
-	Summary   ciSummaryCount   `json:"summary"`
-	Tests     []ciTestJSON     `json:"tests"`
-	Artifacts []ciArtifactJSON `json:"artifacts"`
+	Run       ciRunJSON             `json:"run"`
+	Summary   ciSummaryCount        `json:"summary"`
+	Phases    *explain.PhaseTimings `json:"phases,omitempty"`
+	Tests     []ciTestJSON          `json:"tests"`
+	Artifacts []ciArtifactJSON      `json:"artifacts"`
 }
 
 type ciRunJSON struct {
@@ -373,10 +374,11 @@ type ciSummaryCount struct {
 }
 
 type ciTestJSON struct {
-	Test            string                   `json:"test"`
-	Outcome         string                   `json:"outcome"`
-	DurationMs      float64                  `json:"duration_ms"`
-	Services        []string                 `json:"services"`
+	Test            string                    `json:"test"`
+	Outcome         string                    `json:"outcome"`
+	DurationMs      float64                   `json:"duration_ms"`
+	Phases          *explain.PhaseTimings     `json:"phases,omitempty"`
+	Services        []string                  `json:"services"`
 	Assertions      []explain.Assertion      `json:"assertions,omitempty"`
 	Errors          []explain.TrafficError   `json:"errors,omitempty"`
 	ServiceFailures []explain.ServiceFailure `json:"service_failures,omitempty"`
@@ -419,6 +421,7 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 			Test:       report.Test,
 			Outcome:    report.Outcome,
 			DurationMs: report.DurationMs,
+			Phases:     report.Phases,
 			Services:   report.Services,
 		}
 		if report.Outcome != "passed" {
@@ -452,6 +455,21 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 		}
 	}
 
+	// Compute aggregate phase timings from all tests.
+	var aggPhases explain.PhaseTimings
+	for _, t := range tests {
+		if t.Phases != nil {
+			aggPhases.ArtifactsMs += t.Phases.ArtifactsMs
+			aggPhases.StartupMs += t.Phases.StartupMs
+			aggPhases.TestMs += t.Phases.TestMs
+			aggPhases.TeardownMs += t.Phases.TeardownMs
+		}
+	}
+	var aggPhasesPtr *explain.PhaseTimings
+	if aggPhases.ArtifactsMs > 0 || aggPhases.StartupMs > 0 || aggPhases.TestMs > 0 || aggPhases.TeardownMs > 0 {
+		aggPhasesPtr = &aggPhases
+	}
+
 	// Apply outcome filter to the displayed test list.
 	if flags.failed || flags.passed {
 		var filtered []ciTestJSON
@@ -466,14 +484,14 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 	}
 
 	if flags.pretty {
-		renderCiPretty(os.Stdout, info, summary, tests, artifacts, flags.verbose)
+		renderCiPretty(os.Stdout, info, summary, tests, artifacts, aggPhasesPtr, flags.verbose)
 	} else {
-		renderCiJSON(os.Stdout, info, summary, tests, artifacts)
+		renderCiJSON(os.Stdout, info, summary, tests, artifacts, aggPhasesPtr)
 	}
 	return nil
 }
 
-func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON) {
+func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON, aggPhases *explain.PhaseTimings) {
 	out := ciSummaryJSON{
 		Run: ciRunJSON{
 			ID:         info.ID,
@@ -483,6 +501,7 @@ func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []
 			DurationS:  int(info.Duration.Seconds()),
 		},
 		Summary:   summary,
+		Phases:    aggPhases,
 		Tests:     tests,
 		Artifacts: artifacts,
 	}
@@ -491,7 +510,7 @@ func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []
 	enc.Encode(out)
 }
 
-func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON, verbose bool) {
+func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON, aggPhases *explain.PhaseTimings, verbose bool) {
 	// Header.
 	durStr := formatRunDuration(info.Duration)
 	fmt.Fprintf(w, "%s  %s  %s  %s\n",
@@ -502,6 +521,14 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 	fmt.Fprintln(w, info.URL)
 	fmt.Fprintln(w)
 
+	// Aggregate phase timings.
+	if aggPhases != nil {
+		totalMs := aggPhases.ArtifactsMs + aggPhases.StartupMs + aggPhases.TestMs + aggPhases.TeardownMs
+		if ps := formatPhases(aggPhases, totalMs); ps != "" {
+			fmt.Fprintf(w, "Phases: %s\n\n", ps)
+		}
+	}
+
 	// Test table.
 	headers := []string{"OUTCOME", "NAME", "DURATION"}
 	widths := make([]int, len(headers))
@@ -510,7 +537,8 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 	}
 
 	type row struct {
-		cols [3]string
+		cols   [3]string
+		phases string
 	}
 	rows := make([]row, len(tests))
 	for i, t := range tests {
@@ -519,7 +547,10 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 			outcome = "unknown"
 		}
 		durStr := formatLsDuration(t.DurationMs)
-		rows[i] = row{cols: [3]string{outcome, t.Test, durStr}}
+		rows[i] = row{
+			cols:   [3]string{outcome, t.Test, durStr},
+			phases: formatPhases(t.Phases, t.DurationMs),
+		}
 		for j, c := range rows[i].cols {
 			if len(c) > widths[j] {
 				widths[j] = len(c)
@@ -546,6 +577,9 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 			} else {
 				fmt.Fprint(w, padded)
 			}
+		}
+		if r.phases != "" {
+			fmt.Fprintf(w, "    %s", r.phases)
 		}
 		fmt.Fprintln(w)
 	}
@@ -617,6 +651,30 @@ func formatRunDuration(d time.Duration) string {
 	m := int(d.Minutes())
 	s := int(d.Seconds()) % 60
 	return fmt.Sprintf("%dm%02ds", m, s)
+}
+
+// formatPhases returns a human-readable summary of phase timings, e.g.
+// "artifacts 5.20s · startup 2.10s · test 1.03s". Phases that are 0 or
+// less than 1% of totalMs are omitted.
+func formatPhases(p *explain.PhaseTimings, totalMs float64) string {
+	if p == nil || totalMs <= 0 {
+		return ""
+	}
+	threshold := totalMs * 0.01
+	var parts []string
+	if p.ArtifactsMs >= threshold {
+		parts = append(parts, "artifacts "+formatLsDuration(p.ArtifactsMs))
+	}
+	if p.StartupMs >= threshold {
+		parts = append(parts, "startup "+formatLsDuration(p.StartupMs))
+	}
+	if p.TestMs >= threshold {
+		parts = append(parts, "test "+formatLsDuration(p.TestMs))
+	}
+	if p.TeardownMs >= threshold {
+		parts = append(parts, "teardown "+formatLsDuration(p.TeardownMs))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // --- Artifact event scanning ---
