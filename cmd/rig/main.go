@@ -34,6 +34,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "rig explain: %v\n", err)
 			os.Exit(1)
 		}
+	case "summary":
+		if err := runSummary(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rig summary: %v\n", err)
+			os.Exit(1)
+		}
 	case "ci":
 		if err := runCi(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "rig ci: %v\n", err)
@@ -61,6 +66,7 @@ Commands:
   logs    <file>         View service logs
   ls      [pattern]      List recent log files
   explain <file>         Analyze failure from event log
+  summary [pattern]      Summarize local test results
   ci      [target]       Analyze CI run artifacts (requires gh CLI)
   cache prune          Prune stale cache entries
 
