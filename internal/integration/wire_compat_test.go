@@ -95,7 +95,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 			InitHook(func(ctx context.Context, w rig.Wiring) error { return nil }).
 			PrestartHook(func(ctx context.Context, w rig.Wiring) error { return nil }),
 		"myprocess": rig.Process("/tmp/fake-bin").Dir("/tmp/workdir"),
-		"mycontainer": rig.Container("nginx:alpine").
+		"mycontainer": rig.Container("traefik/whoami").
 			Port(80).
 			Cmd("sh", "-c", "echo hi").
 			Env("FOO", "bar").
@@ -224,7 +224,7 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		}
 		var cfg map[string]any
 		json.Unmarshal(svc.Config, &cfg)
-		if cfg["image"] != "nginx:alpine" {
+		if cfg["image"] != "traefik/whoami" {
 			t.Errorf("mycontainer config.image = %v", cfg["image"])
 		}
 		if cmd, ok := cfg["cmd"].([]any); !ok || len(cmd) != 3 {
