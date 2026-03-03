@@ -599,7 +599,7 @@ All rig state lives under a single base directory. The default is `~/.rig`. Over
 ```
 ~/.rig/                          # base directory (or $RIG_DIR)
 ├── bin/
-│   └── v0.2.0/
+│   └── v0.3.0/
 │       └── rigd                 # downloaded binary for this version
 ├── cache/                       # artifact cache (Docker images, Go builds, downloads)
 ├── logs/                        # JSONL event logs and pretty-printed logs per test
@@ -610,9 +610,9 @@ All rig state lives under a single base directory. The default is `~/.rig`. Over
 │       ├── api/                 # per-service temp dir
 │       └── db/
 ├── rigd.addr                    # server address (unversioned, used with RIG_BINARY)
-├── rigd-v0.2.0.addr             # server address (versioned, used with managed binaries)
+├── rigd-v0.3.0.addr             # server address (versioned, used with managed binaries)
 ├── rigd.lock                    # startup lock (unversioned)
-├── rigd-v0.2.0.lock             # startup lock (versioned)
+├── rigd-v0.3.0.lock             # startup lock (versioned)
 └── rigd.log                     # server stderr log
 ```
 
