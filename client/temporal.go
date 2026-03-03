@@ -33,8 +33,8 @@ func (d *TemporalDef) Version(v string) *TemporalDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *TemporalDef) Egress(service string, ingress ...string) *TemporalDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *TemporalDef) Egress(service string) *TemporalDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.

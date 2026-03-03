@@ -26,8 +26,8 @@ func SQS() *SQSDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *SQSDef) Egress(service string, ingress ...string) *SQSDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *SQSDef) Egress(service string) *SQSDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.

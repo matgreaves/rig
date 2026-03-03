@@ -35,8 +35,8 @@ func (d *PostgresDef) Image(image string) *PostgresDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *PostgresDef) Egress(service string, ingress ...string) *PostgresDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *PostgresDef) Egress(service string) *PostgresDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.

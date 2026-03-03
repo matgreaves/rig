@@ -45,14 +45,9 @@ func (d *GoDef) Ingress(name string, def IngressDef) *GoDef {
 	return d
 }
 
-// Egress adds a dependency on a service. The egress is named after the
-// target service. If ingress is provided, it specifies which ingress on the
-// target; otherwise the target's sole ingress is used.
-//
-//	.Egress("postgres")           // egress "postgres" → postgres default
-//	.Egress("postgres", "admin")  // egress "postgres" → postgres/admin
-func (d *GoDef) Egress(service string, ingress ...string) *GoDef {
-	return d.EgressAs(service, service, ingress...)
+// Egress adds a dependency on a service, named after the target.
+func (d *GoDef) Egress(service string) *GoDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name. Use this when the
@@ -137,8 +132,8 @@ func (d *FuncDef) Ingress(name string, def IngressDef) *FuncDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *FuncDef) Egress(service string, ingress ...string) *FuncDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *FuncDef) Egress(service string) *FuncDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.
@@ -214,8 +209,8 @@ func (d *ProcessDef) Ingress(name string, def IngressDef) *ProcessDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *ProcessDef) Egress(service string, ingress ...string) *ProcessDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *ProcessDef) Egress(service string) *ProcessDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.
@@ -289,8 +284,8 @@ func (d *CustomDef) Ingress(name string, def IngressDef) *CustomDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *CustomDef) Egress(service string, ingress ...string) *CustomDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *CustomDef) Egress(service string) *CustomDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.
