@@ -48,7 +48,10 @@ func (d DockerPull) Cached(outputDir string) (Output, bool) {
 	}, true
 }
 
-// Resolve pulls the image and writes a breadcrumb with the image ID.
+// Resolve ensures the image is available locally. If the image already exists
+// in the Docker daemon it is used directly (no registry contact). Otherwise it
+// is pulled from the registry. Either way, breadcrumbs are written so future
+// runs hit the Cached fast-path.
 func (d DockerPull) Resolve(ctx context.Context, outputDir string) (Output, error) {
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return Output{}, fmt.Errorf("create output dir: %w", err)
@@ -59,22 +62,28 @@ func (d DockerPull) Resolve(ctx context.Context, outputDir string) (Output, erro
 		return Output{}, fmt.Errorf("docker client: %w", err)
 	}
 
-	rc, err := cli.ImagePull(ctx, d.Image, image.PullOptions{})
-	if err != nil {
-		return Output{}, fmt.Errorf("docker pull %s: %w", d.Image, err)
-	}
-	// Drain the pull output to completion — the pull isn't done until
-	// the response body is fully read.
-	if _, err := io.Copy(io.Discard, rc); err != nil {
-		rc.Close()
-		return Output{}, fmt.Errorf("docker pull %s: read response: %w", d.Image, err)
-	}
-	rc.Close()
-
-	// Inspect to get the resolved image ID.
+	// Fast path: if the image already exists locally, use it without
+	// contacting the registry. The background refresher handles pulling
+	// newer versions of mutable tags during idle time.
 	inspect, _, err := cli.ImageInspectWithRaw(ctx, d.Image)
 	if err != nil {
-		return Output{}, fmt.Errorf("docker inspect %s: %w", d.Image, err)
+		// Image not present locally — pull from registry.
+		rc, err := cli.ImagePull(ctx, d.Image, image.PullOptions{})
+		if err != nil {
+			return Output{}, fmt.Errorf("docker pull %s: %w", d.Image, err)
+		}
+		// Drain the pull output to completion — the pull isn't done until
+		// the response body is fully read.
+		if _, err := io.Copy(io.Discard, rc); err != nil {
+			rc.Close()
+			return Output{}, fmt.Errorf("docker pull %s: read response: %w", d.Image, err)
+		}
+		rc.Close()
+
+		inspect, _, err = cli.ImageInspectWithRaw(ctx, d.Image)
+		if err != nil {
+			return Output{}, fmt.Errorf("docker inspect %s: %w", d.Image, err)
+		}
 	}
 
 	imageID := inspect.ID
