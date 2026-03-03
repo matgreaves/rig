@@ -16,7 +16,7 @@ If you need to run tests for a single module with `go test` directly (e.g. `cd e
 
 ### Sub-modules
 
-The project has eight Go modules:
+The project has nine Go modules:
 
 | Module | Path | Purpose |
 |--------|------|---------|
@@ -27,9 +27,10 @@ The project has eight Go modules:
 | `github.com/matgreaves/rig/connect/pgx` | `connect/pgx/go.mod` | Postgres client helper — isolates pgx/v5 dependency |
 | `github.com/matgreaves/rig/connect/redisx` | `connect/redisx/go.mod` | Redis client helper — isolates go-redis/v9 dependency |
 | `github.com/matgreaves/rig/connect/s3x` | `connect/s3x/go.mod` | S3 client helper — isolates aws-sdk-go-v2 dependency |
+| `github.com/matgreaves/rig/connect/sqsx` | `connect/sqsx/go.mod` | SQS client helper — isolates aws-sdk-go-v2 dependency |
 | `github.com/matgreaves/rig/examples` | `examples/go.mod` | Example apps and integration tests |
 
-Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `connect/redisx`, `connect/s3x`, `examples/`) require a `rigd` binary — either run `make build` first or set `RIG_BINARY`.
+Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `connect/redisx`, `connect/s3x`, `connect/sqsx`, `examples/`) require a `rigd` binary — either run `make build` first or set `RIG_BINARY`.
 
 ## Project structure
 
@@ -41,6 +42,7 @@ Sub-module integration tests (e.g. `connect/temporalx`, `connect/pgx`, `connect/
 - `connect/pgx/` — Postgres client helper (sub-module)
 - `connect/redisx/` — Redis client helper (sub-module)
 - `connect/s3x/` — S3 client helper (sub-module)
+- `connect/sqsx/` — SQS client helper (sub-module)
 - `examples/echo/` — minimal example: single Go HTTP service + test
 - `examples/orderflow/` — full example: Postgres + Temporal + HTTP API
 - `internal/explain/` — failure diagnosis engine (analyzes JSONL event logs)
@@ -77,7 +79,7 @@ rig ls --failed -q | xargs -I{} rig explain {}   # all failures
 
 Key flags: `--failed`/`--passed` filter by outcome, `-q` outputs file paths for piping, `-n N` limits to N most recent results.
 
-**CI failures** — when CI is red, start here:
+**CI failures** — **always run `rig ci` first** when CI is red or you need to check CI status. Do not guess at failures or re-run tests locally without first understanding what failed:
 
 ```bash
 # 1. Get the full picture (JSON — parseable)
@@ -91,6 +93,14 @@ rig ci <PR#> explain <test> -p
 ```
 
 Target is optional (defaults to current branch), or a PR number, or a run ID. Artifacts are cached so follow-up commands are instant. All commands also support `RIG_LOGS` env var to override the log directory.
+
+**Cache management**:
+
+```bash
+rig cache prune              # remove entries older than 24h
+rig cache prune -m 7d        # remove entries older than 7 days
+rig cache prune --dry-run    # preview what would be removed
+```
 
 ## Key conventions
 

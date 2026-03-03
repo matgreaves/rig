@@ -160,7 +160,7 @@ The JSON body sent to `POST /environments`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `s3`, `temporal`, `client`, `custom` |
+| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `s3`, `sqs`, `temporal`, `client`, `custom` |
 | `config` | object | No | Type-specific configuration as raw JSON |
 | `args` | string[] | No | Command-line arguments. Supports `${VAR}` template expansion. |
 | `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, the service has no ingresses (valid for workers). SDK builders typically add a default HTTP ingress. |
@@ -257,6 +257,12 @@ Each service type reads type-specific fields from `config`:
 - Pooled: shares a single container across test environments; each environment gets an isolated bucket
 - Published attributes: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
 
+**`sqs`**: no config fields
+- Default ingress: single TCP on port 9324
+- Backed by ElasticMQ (`softwaremill/elasticmq-native:1.6.9`)
+- Pooled: shares a single container across test environments; each environment gets an isolated queue
+- Published attributes: `SQS_ENDPOINT` (`http://${HOST}:${PORT}`), `SQS_QUEUE_URL` (queue URL), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
+
 **`temporal`**: `{"version": "1.5.1"}`
 - `version` (optional): Temporal CLI version. Default `1.5.1`.
 - Default ingresses: `"default"` (gRPC) + `"ui"` (HTTP)
@@ -313,6 +319,7 @@ Well-known attributes published by built-in service types:
 | Postgres | `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | `PGHOST="${HOST}"`, `PGPORT="${PORT}"` |
 | Redis | `REDIS_URL` | `REDIS_URL="redis://${HOST}:${PORT}/{db}"` |
 | S3 | `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `S3_ENDPOINT="http://${HOST}:${PORT}"` |
+| SQS | `SQS_ENDPOINT`, `SQS_QUEUE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `SQS_ENDPOINT="http://${HOST}:${PORT}"` |
 | Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE` | `TEMPORAL_ADDRESS="${HOSTPORT}"` |
 
 ---
