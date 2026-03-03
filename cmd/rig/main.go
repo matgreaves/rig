@@ -44,9 +44,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "rig ci: %v\n", err)
 			os.Exit(1)
 		}
-	case "cache":
-		if err := runCache(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "rig cache: %v\n", err)
+	case "prune":
+		if err := runPrune(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rig prune: %v\n", err)
 			os.Exit(1)
 		}
 	case "help", "-h", "--help":
@@ -68,7 +68,7 @@ Commands:
   explain <file>         Analyze failure from event log
   summary [pattern]      Summarize local test results
   ci      [target]       Analyze CI run artifacts (requires gh CLI)
-  cache prune          Prune stale cache entries
+  prune                  Prune stale cache entries and logs
 
 Run 'rig <command> --help' for command-specific flags.
 `)
