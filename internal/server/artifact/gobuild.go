@@ -58,7 +58,7 @@ func (g GoBuild) CacheKey() (string, error) {
 // Known limitations:
 //   - go.mod replace directives pointing at local paths: changes in the
 //     replaced module are not reflected in the cache key. Users must clean
-//     the cache manually (or rig cache clean, when available).
+//     the cache manually (or rig prune -c).
 //   - //go:embed files that are not .go/go.mod/go.sum: embedded assets
 //     (templates, SQL migrations, etc.) are not hashed. Same workaround.
 func (g GoBuild) localCacheKey() (string, error) {

@@ -252,12 +252,14 @@ rig ci <PR#> --failed | jq -r '.tests[].test'  # failed test names
 rig ci | jq -r '.run.conclusion'                # did CI pass?
 ```
 
-### Cache management
+### Pruning
 
 ```bash
-rig cache prune              # remove entries older than 24h
-rig cache prune -m 7d        # remove entries older than 7 days
-rig cache prune --dry-run    # preview what would be removed
+rig prune                    # prune cache + logs older than 24h
+rig prune -c                 # cache only
+rig prune -l                 # logs only
+rig prune -m 7d              # 7-day cutoff
+rig prune --dry-run          # preview what would be removed
 ```
 
 ## Build & test (for rig contributors)
