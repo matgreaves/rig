@@ -27,6 +27,7 @@ ep := env.Endpoint("api") // connect.Endpoint{HostPort, Protocol, Attributes}
 | `github.com/matgreaves/rig/connect/pgx` | `pgxpool.Pool` / `*sql.DB` from endpoint | pgx/v5 |
 | `github.com/matgreaves/rig/connect/redisx` | Redis client from endpoint | go-redis/v9 |
 | `github.com/matgreaves/rig/connect/s3x` | S3 client from endpoint | aws-sdk-go-v2 |
+| `github.com/matgreaves/rig/connect/sqsx` | SQS client from endpoint | aws-sdk-go-v2 |
 | `github.com/matgreaves/rig/connect/temporalx` | Temporal client from endpoint | Temporal SDK |
 
 Root module has zero external dependencies. `connect/pgx` and `connect/temporalx` are separate Go modules to isolate heavy deps.
@@ -42,6 +43,7 @@ Root module has zero external dependencies. `connect/pgx` and `connect/temporalx
 | `rig.Postgres()` | Managed Postgres container | TCP (5432) |
 | `rig.Redis()` | Managed Redis container | TCP (6379) |
 | `rig.S3()` | Managed S3 storage (SeaweedFS) | TCP (8333) |
+| `rig.SQS()` | Managed SQS queue (ElasticMQ) | TCP (9324) |
 | `rig.Temporal()` | Managed Temporal dev server | gRPC |
 
 All builders use method chaining: `.Egress("name")`, `.NoIngress()`, `.Ingress("name", def)`, `.Args(...)`, `.InitHook(fn)`, `.PrestartHook(fn)`.
@@ -81,6 +83,10 @@ connect.RedisURL.MustGet(ep)    // "redis://host:port/0"
 // S3
 connect.S3Endpoint.MustGet(ep)       // "http://host:port"
 connect.S3Bucket.MustGet(ep)         // "rig-1"
+
+// SQS
+connect.SQSEndpoint.MustGet(ep)      // "http://host:port"
+connect.SQSQueueURL.MustGet(ep)      // "http://host:port/queue/rig-1"
 
 // Temporal
 connect.TemporalAddress.MustGet(ep)    // "host:port"
@@ -217,7 +223,9 @@ rig logs OrderFlow --grep "connection refused"
 
 Test assertions made via `env.T` (Fatal, Error, etc.) appear inline in `rig logs` as bold red markers with file:line info, interleaved with the service output that was happening at the time.
 
-### CI failures — when CI is red, start here
+### CI failures — ALWAYS use `rig ci` to diagnose
+
+When CI fails or you need to check CI status, **always run `rig ci` first** — do not guess at failures or re-run tests locally without understanding what failed. This is the fastest path to diagnosis.
 
 ```bash
 # 1. Get the full picture (JSON — parseable)
@@ -244,6 +252,14 @@ rig ci <PR#> --failed | jq -r '.tests[].test'  # failed test names
 rig ci | jq -r '.run.conclusion'                # did CI pass?
 ```
 
+### Cache management
+
+```bash
+rig cache prune              # remove entries older than 24h
+rig cache prune -m 7d        # remove entries older than 7 days
+rig cache prune --dry-run    # preview what would be removed
+```
+
 ## Build & test (for rig contributors)
 
 ```bash
@@ -252,7 +268,7 @@ make test    # Build + run all tests
 make clean   # Remove artifacts
 ```
 
-Eight Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pgx/go.mod`, `connect/redisx/go.mod`, `connect/s3x/go.mod`, `connect/temporalx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
+Nine Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pgx/go.mod`, `connect/redisx/go.mod`, `connect/s3x/go.mod`, `connect/sqsx/go.mod`, `connect/temporalx/go.mod`, `examples/go.mod`. Always use `make test` — it sets `RIG_BINARY` and builds `rigd` first.
 
 ## Key files
 
@@ -264,10 +280,11 @@ Eight Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/p
 - `client/postgres.go` — `Postgres` builder
 - `client/redis.go` — `Redis` builder
 - `client/s3.go` — `S3` builder
+- `client/sqs.go` — `SQS` builder
 - `client/temporal.go` — `Temporal` builder
 - `client/environment.go` — `Environment`, `Endpoint()` lookup
 - `connect/wiring.go` — `Wiring`, `ParseWiring`
-- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `RedisURL`, `S3Endpoint`, `TemporalAddress`, etc.)
+- `connect/attrs.go` — `Attr[T]`, well-known attributes (`PGHost`, `RedisURL`, `S3Endpoint`, `SQSEndpoint`, `TemporalAddress`, etc.)
 - `connect/httpx/client.go` — `httpx.New`, HTTP client helpers
 - `connect/httpx/server.go` — `httpx.ListenAndServe` for services
 - `internal/server/` — rigd server (not importable by consumers)

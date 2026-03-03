@@ -183,6 +183,20 @@ Managed S3-compatible object storage backed by SeaweedFS.
 rig.S3()
 ```
 
+### SQS (`"sqs"`)
+
+Managed SQS-compatible message queue backed by ElasticMQ.
+
+- **No user-defined ingress**: fixed TCP on port 9324
+- **Published attributes**: `SQS_ENDPOINT` (`http://${HOST}:${PORT}`), `SQS_QUEUE_URL` (queue URL), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
+- **Pooled**: shares a single ElasticMQ container across test environments; each gets an isolated queue
+
+`SQS_ENDPOINT` uses template variables (`${HOST}`, `${PORT}`) so it stays correct through proxy address rewriting. The queue URL is assigned automatically by the pool.
+
+```go
+rig.SQS()
+```
+
 ### Temporal (`"temporal"`)
 
 Downloads and runs a Temporal dev server.
@@ -222,6 +236,7 @@ rig.Custom("redis", map[string]any{"image": "redis:7-alpine"})
 | Postgres | (automatic) | TCP | Fixed port 5432, no user override |
 | Redis | (automatic) | TCP | Fixed port 6379, no user override |
 | S3 | (automatic) | TCP | Fixed port 8333, no user override |
+| SQS | (automatic) | TCP | Fixed port 9324, no user override |
 | Temporal | `"default"` + `"ui"` | gRPC + HTTP | |
 | Custom | `"default"` | HTTP | |
 
