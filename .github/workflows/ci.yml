@@ -8,14 +8,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      RIG_DIR: ${{ github.workspace }}/.rig
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: internal/go.mod
 
+      - name: Cache rig artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RIG_DIR }}/cache
+          key: rig-cache-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            rig-cache-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Test
         run: make test
+
+      - name: Prune stale cache entries
+        if: always()
+        run: cd cmd/rig && go run . cache prune -m 1h
 
       - name: Upload rig artifacts
         uses: actions/upload-artifact@v4
