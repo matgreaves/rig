@@ -50,6 +50,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return redisToSpec(d, handlers)
 	case *S3Def:
 		return s3ToSpec(d, handlers)
+	case *SQSDef:
+		return sqsToSpec(d, handlers)
 	default:
 		return specService{}, fmt.Errorf("unknown service type: %T", def)
 	}
@@ -344,6 +346,22 @@ func s3ToSpec(d *S3Def, handlers map[string]hookFunc) (specService, error) {
 		Type: "s3",
 		Ingresses: map[string]specIngressSpec{
 			"default": {Protocol: TCP, ContainerPort: 8333},
+		},
+		Egresses: egressesToSpec(d.egresses),
+		Hooks:    hooks,
+	}, nil
+}
+
+func sqsToSpec(d *SQSDef, handlers map[string]hookFunc) (specService, error) {
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return specService{}, err
+	}
+
+	return specService{
+		Type: "sqs",
+		Ingresses: map[string]specIngressSpec{
+			"default": {Protocol: TCP, ContainerPort: 9324},
 		},
 		Egresses: egressesToSpec(d.egresses),
 		Hooks:    hooks,

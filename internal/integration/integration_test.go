@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	rig "github.com/matgreaves/rig/client"
 	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/connect/httpx"
@@ -75,6 +76,7 @@ func TestMain(m *testing.M) {
 	pgPool := service.NewPostgresPool(os.Getpid())
 	redisPool := service.NewRedisPool(os.Getpid())
 	s3Pool := service.NewS3Pool(os.Getpid())
+	sqsPool := service.NewSQSPool(os.Getpid())
 
 	cacheDir := filepath.Join(dir, "..", ".rig", "cache")
 	temporalPool := service.NewTemporalPool(cacheDir)
@@ -88,6 +90,7 @@ func TestMain(m *testing.M) {
 	reg.Register("redis", service.NewRedis(redisPool))
 	reg.Register("temporal", service.NewTemporal(temporalPool))
 	reg.Register("s3", service.NewS3(s3Pool))
+	reg.Register("sqs", service.NewSQS(sqsPool))
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 
@@ -112,6 +115,7 @@ func TestMain(m *testing.M) {
 
 	ts.Close()
 	temporalPool.Close()
+	sqsPool.Close()
 	s3Pool.Close()
 	redisPool.Close()
 	pgPool.Close()
@@ -714,6 +718,104 @@ func TestUp(t *testing.T) {
 		conn2.Close()
 
 		t.Logf("shared container: bucket1=%s, bucket2=%s", bucket1, bucket2)
+	})
+
+	t.Run("SQS", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"queue": rig.SQS(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep := env.Endpoint("queue")
+
+		// Verify TCP connectivity.
+		conn, err := net.DialTimeout("tcp", ep.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("sqs dial: %v", err)
+		}
+		conn.Close()
+
+		// Verify endpoint attributes.
+		sqsEndpoint := ep.Attr("SQS_ENDPOINT")
+		if sqsEndpoint == "" {
+			t.Error("SQS_ENDPOINT is empty")
+		}
+		if !strings.HasPrefix(sqsEndpoint, "http://") {
+			t.Errorf("SQS_ENDPOINT = %q, want http:// prefix", sqsEndpoint)
+		}
+		sqsQueueURL := ep.Attr("SQS_QUEUE_URL")
+		if sqsQueueURL == "" {
+			t.Error("SQS_QUEUE_URL is empty")
+		}
+
+		// Build SQS client from endpoint attributes.
+		sqsClient := sqs.New(sqs.Options{
+			BaseEndpoint: aws.String(sqsEndpoint),
+			Region:       "us-east-1",
+			Credentials:  credentials.NewStaticCredentialsProvider(ep.Attr("AWS_ACCESS_KEY_ID"), ep.Attr("AWS_SECRET_ACCESS_KEY"), ""),
+		})
+
+		// Verify we can send and receive a message.
+		_, err = sqsClient.SendMessage(context.Background(), &sqs.SendMessageInput{
+			QueueUrl:    aws.String(sqsQueueURL),
+			MessageBody: aws.String("hello sqs"),
+		})
+		if err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+
+		recvResult, err := sqsClient.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+			QueueUrl:            aws.String(sqsQueueURL),
+			MaxNumberOfMessages: 1,
+			WaitTimeSeconds:     5,
+		})
+		if err != nil {
+			t.Fatalf("ReceiveMessage: %v", err)
+		}
+		if len(recvResult.Messages) == 0 {
+			t.Fatal("ReceiveMessage returned no messages")
+		}
+		if got := *recvResult.Messages[0].Body; got != "hello sqs" {
+			t.Errorf("message body = %q, want %q", got, "hello sqs")
+		}
+	})
+
+	t.Run("SQSSharedContainer", func(t *testing.T) {
+		t.Parallel()
+
+		env1 := rig.Up(t, rig.Services{
+			"queue": rig.SQS(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		env2 := rig.Up(t, rig.Services{
+			"queue": rig.SQS(),
+		}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+		ep1 := env1.Endpoint("queue")
+		ep2 := env2.Endpoint("queue")
+
+		// Isolated queues: different SQS_QUEUE_URL values.
+		url1 := ep1.Attr("SQS_QUEUE_URL")
+		url2 := ep2.Attr("SQS_QUEUE_URL")
+		if url1 == url2 {
+			t.Fatalf("expected different queue URLs, both got %s", url1)
+		}
+
+		// Both environments should be reachable.
+		conn1, err := net.DialTimeout("tcp", ep1.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env1 dial: %v", err)
+		}
+		conn1.Close()
+
+		conn2, err := net.DialTimeout("tcp", ep2.HostPort, 5*time.Second)
+		if err != nil {
+			t.Fatalf("env2 dial: %v", err)
+		}
+		conn2.Close()
+
+		t.Logf("shared container: url1=%s, url2=%s", url1, url2)
 	})
 
 	t.Run("PostgresInitSQL_BadSQL", func(t *testing.T) {

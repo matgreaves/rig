@@ -20,6 +20,7 @@ var KnownServiceTypes = map[string]bool{
 	"temporal":  true,
 	"redis":     true,
 	"s3":        true,
+	"sqs":       true,
 	"custom":    true,
 	"proxy":     true,
 	"test":      true,

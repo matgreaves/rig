@@ -66,6 +66,12 @@ var (
 	S3SecretAccessKey = Attr[string]("AWS_SECRET_ACCESS_KEY")
 )
 
+// Well-known SQS attributes.
+var (
+	SQSEndpoint = Attr[string]("SQS_ENDPOINT")
+	SQSQueueURL = Attr[string]("SQS_QUEUE_URL")
+)
+
 // Cross-cutting attributes.
 var (
 	// Secure indicates the endpoint requires TLS or equivalent.
