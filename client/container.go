@@ -73,8 +73,8 @@ func (d *ContainerDef) Ingress(name string, def IngressDef) *ContainerDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *ContainerDef) Egress(service string, ingress ...string) *ContainerDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *ContainerDef) Egress(service string) *ContainerDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.

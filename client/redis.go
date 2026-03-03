@@ -33,8 +33,8 @@ func (d *RedisDef) Image(image string) *RedisDef {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *RedisDef) Egress(service string, ingress ...string) *RedisDef {
-	return d.EgressAs(service, service, ingress...)
+func (d *RedisDef) Egress(service string) *RedisDef {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.

@@ -26,8 +26,8 @@ func S3() *S3Def {
 }
 
 // Egress adds a dependency on a service, named after the target.
-func (d *S3Def) Egress(service string, ingress ...string) *S3Def {
-	return d.EgressAs(service, service, ingress...)
+func (d *S3Def) Egress(service string) *S3Def {
+	return d.EgressAs(service, service)
 }
 
 // EgressAs adds a dependency with a custom local name.
