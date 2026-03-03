@@ -351,7 +351,7 @@ func fetchRunInfo(runID int64) (*ciRunInfo, error) {
 // --- Summary ---
 
 type ciSummaryJSON struct {
-	Run       ciRunJSON             `json:"run"`
+	Run       *ciRunJSON            `json:"run,omitempty"`
 	Summary   ciSummaryCount        `json:"summary"`
 	Phases    *explain.PhaseTimings `json:"phases,omitempty"`
 	Tests     []ciTestJSON          `json:"tests"`
@@ -397,13 +397,23 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 	if err != nil {
 		return err
 	}
+	return runSummaryReport(info, ciLogDir, "", flags)
+}
 
-	paths, err := scanDir(ciLogDir, "")
+// runSummaryReport analyzes all log files in dir and renders a summary.
+// When info is non-nil (CI mode), the run header is included. When info
+// is nil (local mode), the header is omitted. Pattern filters log files
+// by name (passed through to scanDir).
+func runSummaryReport(info *ciRunInfo, dir string, pattern string, flags ciFlags) error {
+	paths, err := scanDir(dir, pattern)
 	if err != nil {
-		return fmt.Errorf("read CI log directory: %w", err)
+		return fmt.Errorf("read log directory: %w", err)
 	}
 	if len(paths) == 0 {
-		return fmt.Errorf("no log files found in CI artifacts for run %d", runID)
+		if pattern != "" {
+			return fmt.Errorf("no log files matching %q", pattern)
+		}
+		return fmt.Errorf("no log files found")
 	}
 
 	// Analyze all tests.
@@ -496,17 +506,19 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 
 func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON, aggPhases *explain.PhaseTimings) {
 	out := ciSummaryJSON{
-		Run: ciRunJSON{
+		Summary:   summary,
+		Phases:    aggPhases,
+		Tests:     tests,
+		Artifacts: artifacts,
+	}
+	if info != nil {
+		out.Run = &ciRunJSON{
 			ID:         info.ID,
 			Branch:     info.Branch,
 			Conclusion: info.Conclusion,
 			URL:        info.URL,
 			DurationS:  int(info.Duration.Seconds()),
-		},
-		Summary:   summary,
-		Phases:    aggPhases,
-		Tests:     tests,
-		Artifacts: artifacts,
+		}
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -514,15 +526,17 @@ func renderCiJSON(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []
 }
 
 func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests []ciTestJSON, artifacts []ciArtifactJSON, aggPhases *explain.PhaseTimings, verbose bool) {
-	// Header.
-	durStr := formatRunDuration(info.Duration)
-	fmt.Fprintf(w, "%s  %s  %s  %s\n",
-		bold(fmt.Sprintf("Run #%d", info.ID)),
-		info.Branch,
-		colorOutcome(info.Conclusion),
-		durStr)
-	fmt.Fprintln(w, info.URL)
-	fmt.Fprintln(w)
+	// Header (CI mode only).
+	if info != nil {
+		durStr := formatRunDuration(info.Duration)
+		fmt.Fprintf(w, "%s  %s  %s  %s\n",
+			bold(fmt.Sprintf("Run #%d", info.ID)),
+			info.Branch,
+			colorOutcome(info.Conclusion),
+			durStr)
+		fmt.Fprintln(w, info.URL)
+		fmt.Fprintln(w)
+	}
 
 	// Aggregate phase timings.
 	if aggPhases != nil {
