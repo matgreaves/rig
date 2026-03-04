@@ -434,6 +434,96 @@ func TestServer(t *testing.T) {
 		}
 	})
 
+	t.Run("CrashSummary", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Two services: a healthy one (api) and a crashing one (broken).
+		// The healthy service generates stopping/stopped events during
+		// teardown — verify those don't leak into the summary.
+		envSpec := map[string]any{
+			"name": "test-crash-summary",
+			"services": map[string]any{
+				"api": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
+				},
+				"broken": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: failBin}),
+					"ingresses": map[string]any{
+						"default": map[string]any{"protocol": "http"},
+					},
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		json.NewDecoder(resp.Body).Decode(&created)
+		id := created["id"]
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		down := waitForEvent(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentDown
+		})
+
+		summary := down.Message
+
+		// Summary should include the service name and log output.
+		if !strings.Contains(summary, "broken output:") {
+			t.Errorf("summary missing service log section, got:\n%s", summary)
+		}
+		if !strings.Contains(summary, "intentional failure") {
+			t.Errorf("summary missing service stderr output, got:\n%s", summary)
+		}
+
+		// Summary should NOT contain stopping/stopped noise.
+		if strings.Contains(summary, "service.stopping") {
+			t.Errorf("summary should not contain service.stopping events, got:\n%s", summary)
+		}
+		if strings.Contains(summary, "service.stopped") {
+			t.Errorf("summary should not contain service.stopped events, got:\n%s", summary)
+		}
+
+		// DELETE with ?log=true to get the condensed explain output.
+		// Both paths (buildDownSummary and explain.Condensed) should
+		// surface the failed service name and its stderr — this catches
+		// drift between the two implementations.
+		delReq, _ := http.NewRequest(http.MethodDelete,
+			ts.URL+"/environments/"+id+"?log=true", nil)
+		delResp, err := http.DefaultClient.Do(delReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer delResp.Body.Close()
+
+		var result map[string]any
+		if err := json.NewDecoder(delResp.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		condensed, _ := result["summary"].(string)
+		if condensed == "" {
+			t.Fatal("DELETE ?log=true returned no summary")
+		}
+		if !strings.Contains(condensed, "broken") {
+			t.Errorf("condensed summary missing service name, got:\n%s", condensed)
+		}
+		if !strings.Contains(condensed, "intentional failure") {
+			t.Errorf("condensed summary missing stderr output, got:\n%s", condensed)
+		}
+	})
+
 	t.Run("HealthCheckTimeoutDiagnostics", func(t *testing.T) {
 		t.Parallel()
 

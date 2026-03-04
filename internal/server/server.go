@@ -541,9 +541,30 @@ func buildDownSummary(log *EventLog) string {
 		return "" // normal shutdown
 	}
 
+	// Collect failed service names from environment.failing events.
+	var failedServices []string
+	seen := map[string]bool{}
+	for _, e := range events {
+		if e.Type == EventEnvironmentFailing && e.Service != "" && !seen[e.Service] {
+			failedServices = append(failedServices, e.Service)
+			seen[e.Service] = true
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("environment failed:\n  ")
 	b.WriteString(strings.Join(failures, "\n  "))
+
+	// Include log tails from failed services.
+	for _, svc := range failedServices {
+		tail := log.ServiceLogTail(svc, 5)
+		if tail != "" {
+			b.WriteString("\n\n  ")
+			b.WriteString(svc)
+			b.WriteString(" output:\n")
+			b.WriteString(tail)
+		}
+	}
 
 	// Build a short timeline of events leading up to the failure.
 	// Filter to the same set of events the full timeline uses.
@@ -558,7 +579,8 @@ func buildDownSummary(log *EventLog) string {
 		case EventServiceLog, EventHealthCheckFailed,
 			EventCallbackRequest, EventCallbackResponse,
 			EventRequestCompleted, EventConnectionOpened, EventConnectionClosed,
-			EventGRPCCallCompleted:
+			EventGRPCCallCompleted,
+			EventServiceStopping, EventServiceStopped:
 			continue
 		}
 		elapsed := e.Timestamp.Sub(start).Seconds()
