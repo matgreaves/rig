@@ -175,6 +175,28 @@ func TestUp(t *testing.T) {
 		}
 	})
 
+	// ProcessGoRun verifies that process services inherit the host
+	// environment (PATH, HOME, etc.) so that commands like "go run"
+	// can locate tools without an absolute path.
+	t.Run("ProcessGoRun", func(t *testing.T) {
+		t.Parallel()
+
+		env := rig.Up(t, rig.Services{
+			"echo": rig.Process("go").
+				Args("run", filepath.Join(root, "internal", "testdata", "services", "echo", "cmd")),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+		client := httpx.New(env.Endpoint("echo"))
+		resp, err := client.Get("/health")
+		if err != nil {
+			t.Fatalf("health check: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("health: %d, want 200", resp.StatusCode)
+		}
+	})
+
 	t.Run("WithDependency", func(t *testing.T) {
 		t.Parallel()
 
