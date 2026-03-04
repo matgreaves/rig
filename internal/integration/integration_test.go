@@ -154,6 +154,26 @@ func TestUp(t *testing.T) {
 		}
 	})
 
+	t.Run("GoServiceRelativePath", func(t *testing.T) {
+		t.Parallel()
+
+		// Use a relative module path — the server resolves it against the
+		// SDK's captured working directory (env.Dir).
+		env := rig.Up(t, rig.Services{
+			"echo": rig.Go("../testdata/services/echo/cmd"),
+		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
+
+		client := httpx.New(env.Endpoint("echo"))
+		resp, err := client.Get("/health")
+		if err != nil {
+			t.Fatalf("health check: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("health: %d, want 200", resp.StatusCode)
+		}
+	})
+
 	t.Run("ProcessService", func(t *testing.T) {
 		t.Parallel()
 

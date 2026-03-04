@@ -19,9 +19,10 @@ import (
 // module reference ("github.com/myorg/tool@v1.2.3"). Detection: if Module
 // starts with "/" it is local; otherwise remote.
 type GoBuild struct {
-	Module string // absolute local path or remote module reference
-	GOOS   string // defaults to runtime.GOOS
-	GOARCH string // defaults to runtime.GOARCH
+	Module  string            // absolute local path or remote module reference
+	GOOS    string            // defaults to runtime.GOOS
+	GOARCH  string            // defaults to runtime.GOARCH
+	HostEnv map[string]string // host process env from SDK (used as base for go build)
 }
 
 func (g GoBuild) goos() string {
@@ -40,6 +41,23 @@ func (g GoBuild) goarch() string {
 
 func (g GoBuild) isLocal() bool {
 	return strings.HasPrefix(g.Module, "/")
+}
+
+// buildEnv returns the environment for go build. If HostEnv is set (from the
+// SDK's captured environment), it is used as the base so the build sees the
+// test process's GOPATH, GOPROXY, GOFLAGS, etc. Falls back to rigd's own
+// environment when HostEnv is nil (old SDK).
+func (g GoBuild) buildEnv() []string {
+	var base []string
+	if len(g.HostEnv) > 0 {
+		base = make([]string, 0, len(g.HostEnv)+2)
+		for k, v := range g.HostEnv {
+			base = append(base, k+"="+v)
+		}
+	} else {
+		base = os.Environ()
+	}
+	return append(base, "GOOS="+g.goos(), "GOARCH="+g.goarch())
 }
 
 // CacheKey returns a content-based hash suitable for use as a cache directory
@@ -126,10 +144,7 @@ func (g GoBuild) Resolve(ctx context.Context, outputDir string) (Output, error) 
 	} else {
 		cmd = exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", outputPath, g.Module)
 	}
-	cmd.Env = append(os.Environ(),
-		"GOOS="+g.goos(),
-		"GOARCH="+g.goarch(),
-	)
+	cmd.Env = g.buildEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		os.Remove(outputPath) // clean up any partial output

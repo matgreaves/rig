@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 )
@@ -24,11 +23,13 @@ func envToSpec(testName string, services Services, handlers map[string]hookFunc,
 		}
 		specs[name] = svc
 	}
+	dir, _ := os.Getwd()
 	return specEnvironment{
 		Name:     testName,
 		Services: specs,
 		Observe:  observe,
 		HostEnv:  captureHostEnv(),
+		Dir:      dir,
 	}, nil
 }
 
@@ -60,16 +61,7 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 }
 
 func goToSpec(d *GoDef, handlers map[string]hookFunc) (specService, error) {
-	module := d.module
-	if !filepath.IsAbs(module) {
-		wd, err := os.Getwd()
-		if err != nil {
-			return specService{}, fmt.Errorf("resolve module path: %w", err)
-		}
-		module = filepath.Join(wd, module)
-	}
-
-	cfg, _ := json.Marshal(map[string]string{"module": module})
+	cfg, _ := json.Marshal(map[string]string{"module": d.module})
 
 	hooks, err := hooksToSpec(d.hooks, handlers)
 	if err != nil {

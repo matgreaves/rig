@@ -16,6 +16,7 @@ SDKs should apply these defaults:
 | Cleanup on teardown | `DELETE` with `?log=true` | Include `reason=test_failed` on failure; omit `reason` on pass |
 | Preserve temp dir | No | Controlled via `RIG_PRESERVE` / `RIG_PRESERVE_ON_FAILURE` env vars |
 | Host env capture | Yes | Capture `os.Environ()` and send as `host_env` in the spec |
+| Working dir capture | Yes | Capture `os.Getwd()` and send as `dir` in the spec |
 
 ---
 

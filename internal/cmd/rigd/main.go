@@ -79,6 +79,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rigd: mkdir %s: %v\n", *rigDir, err)
 		os.Exit(1)
 	}
+	// Run from rig dir so child processes inherit a stable, valid cwd
+	// regardless of how or where rigd was spawned.
+	if err := os.Chdir(*rigDir); err != nil {
+		fmt.Fprintf(os.Stderr, "rigd: chdir %s: %v\n", *rigDir, err)
+		os.Exit(1)
+	}
 	if dir := filepath.Dir(addrFile); dir != *rigDir {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "rigd: mkdir %s: %v\n", dir, err)

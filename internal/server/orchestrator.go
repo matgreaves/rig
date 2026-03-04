@@ -68,6 +68,8 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 			arts, err := provider.Artifacts(service.ArtifactParams{
 				ServiceName: name,
 				Spec:        svc,
+				Dir:         env.Dir,
+				HostEnv:     env.HostEnv,
 			})
 			if err != nil {
 				return nil, "", "", fmt.Errorf("service %q: artifacts: %w", name, err)
@@ -166,6 +168,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 				tempDir:    tempDir,
 				envDir:     envDir,
 				hostEnv:    env.HostEnv,
+				dir:        env.Dir,
 				log:        o.Log,
 				envName:    env.Name,
 				instanceID: instanceID,

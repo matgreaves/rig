@@ -72,6 +72,7 @@ func EnsureServer(rigDir string) (string, error) {
 		args = append(args, "--addr-file", addrFile)
 	}
 	cmd := exec.Command(binPath, args...)
+	cmd.Dir = rigDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	// Append stderr to a log file for debugging.

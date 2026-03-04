@@ -19,6 +19,11 @@ type Environment struct {
 	// It is merged as a base layer under wiring env vars so that child
 	// processes (process/go types) inherit PATH, JAVA_HOME, etc.
 	HostEnv map[string]string `json:"host_env,omitempty"`
+
+	// Dir is the working directory of the test process, captured by the SDK.
+	// Used as the default working directory for process/go child services
+	// when no per-service Dir is specified.
+	Dir string `json:"dir,omitempty"`
 }
 
 // ResolvedEnvironment is the runtime view of an environment after all

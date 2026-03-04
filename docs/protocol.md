@@ -155,7 +155,8 @@ The JSON body sent to `POST /environments`.
 | `name` | string | Yes | Environment identifier (typically the test name) |
 | `services` | object | Yes | Map of service name to service spec. At least one required. |
 | `observe` | boolean | No | Enable transparent traffic proxying. Default `false`. |
-| `host_env` | object | No | Host process environment variables (string→string map). Merged as a base layer under wiring env vars for process/go service types so child processes inherit PATH, JAVA_HOME, etc. |
+| `host_env` | object | No | Host process environment variables (string→string map). Merged as a base layer under wiring env vars for process/go child services so they inherit PATH, JAVA_HOME, etc. Also used as the base environment for `go build` during the artifact phase. |
+| `dir` | string | No | Working directory of the test process. Used as the default working directory for process/go child services, and to resolve relative module paths (go services) and relative per-service `dir` values (process services). |
 
 ### Service
 

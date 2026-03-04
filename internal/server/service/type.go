@@ -33,6 +33,7 @@ type StartParams struct {
 	Args        []string                   // raw command arg templates (expand against Env or adjusted env)
 	TempDir     string
 	EnvDir      string
+	Dir         string // default working directory for child processes (from SDK)
 	InstanceID  string // environment instance ID (used for container naming)
 	Stdout      io.Writer
 	Stderr      io.Writer
@@ -56,6 +57,8 @@ type StartParams struct {
 type ArtifactParams struct {
 	ServiceName string
 	Spec        spec.Service
+	Dir         string            // test process working directory (from SDK)
+	HostEnv     map[string]string // host process env from SDK
 }
 
 // ArtifactProvider is implemented by service types that require artifacts
