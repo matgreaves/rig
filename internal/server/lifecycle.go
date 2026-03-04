@@ -31,6 +31,7 @@ type serviceContext struct {
 	tempDir           string
 	envDir            string
 	hostEnv           map[string]string // host process env from SDK
+	dir               string           // test process working directory from SDK
 	log               *EventLog
 	envName           string
 	instanceID        string
@@ -262,6 +263,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Args:        sc.spec.Args,
 			TempDir:     sc.tempDir,
 			EnvDir:      sc.envDir,
+			Dir:         sc.dir,
 			InstanceID:  sc.instanceID,
 			Stdout:      &teeWriter{logWriter, "stdout"},
 			Stderr:      &teeWriter{logWriter, "stderr"},

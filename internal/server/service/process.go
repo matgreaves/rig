@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/matgreaves/rig/internal/spec"
 	"github.com/matgreaves/run"
@@ -38,10 +39,17 @@ func (Process) Runner(params StartParams) run.Runner {
 		}
 	}
 
+	dir := cfg.Dir
+	if dir == "" {
+		dir = params.Dir
+	} else if params.Dir != "" && !filepath.IsAbs(dir) {
+		dir = filepath.Clean(filepath.Join(params.Dir, dir))
+	}
+
 	return run.Process{
 		Name:   params.ServiceName,
 		Path:   cfg.Command,
-		Dir:    cfg.Dir,
+		Dir:    dir,
 		Args:   expandAll(params.Args, params.Env),
 		Env:    params.Env,
 		Stdout: params.Stdout,

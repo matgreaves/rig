@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/matgreaves/rig/internal/server/artifact"
 	"github.com/matgreaves/rig/internal/spec"
@@ -12,9 +14,9 @@ import (
 
 // GoServiceConfig is the type-specific config for "go" services.
 type GoServiceConfig struct {
-	// Module is an absolute local path ("/abs/path/cmd/server") or a remote
-	// module reference ("github.com/myorg/tool@v1.2.3"). The SDK resolves
-	// relative paths to absolute before sending the spec.
+	// Module is an absolute local path ("/abs/path/cmd/server"), a relative
+	// path ("./cmd/server") resolved against the environment's Dir, or a
+	// remote module reference ("github.com/myorg/tool@v1.2.3").
 	Module string `json:"module"`
 }
 
@@ -34,10 +36,14 @@ func (Go) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
 	if cfg.Module == "" {
 		return nil, fmt.Errorf("service %q: go config missing required \"module\" field", params.ServiceName)
 	}
-	key := artifactKey(cfg.Module)
+	if !filepath.IsAbs(cfg.Module) && !strings.Contains(cfg.Module, "@") && params.Dir == "" {
+		return nil, fmt.Errorf("service %q: relative module path %q requires environment dir (SDK must send \"dir\" field)", params.ServiceName, cfg.Module)
+	}
+	module := resolveModule(cfg.Module, params.Dir)
+	key := artifactKey(module)
 	return []artifact.Artifact{{
 		Key:      key,
-		Resolver: artifact.GoBuild{Module: cfg.Module},
+		Resolver: artifact.GoBuild{Module: module, HostEnv: params.HostEnv},
 	}}, nil
 }
 
@@ -58,7 +64,8 @@ func (Go) Runner(params StartParams) run.Runner {
 		}
 	}
 
-	key := artifactKey(cfg.Module)
+	module := resolveModule(cfg.Module, params.Dir)
+	key := artifactKey(module)
 	out, ok := params.Artifacts[key]
 	if !ok {
 		return run.Func(func(context.Context) error {
@@ -69,11 +76,20 @@ func (Go) Runner(params StartParams) run.Runner {
 	return run.Process{
 		Name:   params.ServiceName,
 		Path:   out.Path,
+		Dir:    params.Dir,
 		Args:   expandAll(params.Args, params.Env),
 		Env:    params.Env,
 		Stdout: params.Stdout,
 		Stderr: params.Stderr,
 	}
+}
+
+// resolveModule resolves a relative module path against the environment dir.
+func resolveModule(module, dir string) string {
+	if dir != "" && !filepath.IsAbs(module) {
+		return filepath.Clean(filepath.Join(dir, module))
+	}
+	return module
 }
 
 // artifactKey returns the dedup key for a GoBuild artifact.
