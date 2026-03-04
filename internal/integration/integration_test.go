@@ -368,17 +368,17 @@ func TestUp(t *testing.T) {
 		t.Parallel()
 
 		env := rig.Up(t, rig.Services{
-			"web": rig.Container("traefik/whoami").Port(80),
+			"nginx": rig.Container("nginx:alpine").Port(80),
 		}, rig.WithServer(serverURL), rig.WithTimeout(60*time.Second))
 
-		ep := env.Endpoint("web")
+		ep := env.Endpoint("nginx")
 		resp, err := http.Get("http://" + ep.HostPort + "/")
 		if err != nil {
-			t.Fatalf("whoami request: %v", err)
+			t.Fatalf("nginx request: %v", err)
 		}
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			t.Errorf("whoami status: %d, want 200", resp.StatusCode)
+			t.Errorf("nginx status: %d, want 200", resp.StatusCode)
 		}
 	})
 
