@@ -14,6 +14,11 @@ type Environment struct {
 	// a proxy on every egress edge and every external connection, capturing
 	// request/connection events in the event log.
 	Observe bool `json:"observe,omitempty"`
+
+	// HostEnv is the host process environment captured by the SDK.
+	// It is merged as a base layer under wiring env vars so that child
+	// processes (process/go types) inherit PATH, JAVA_HOME, etc.
+	HostEnv map[string]string `json:"host_env,omitempty"`
 }
 
 // ResolvedEnvironment is the runtime view of an environment after all

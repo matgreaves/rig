@@ -30,6 +30,7 @@ type serviceContext struct {
 	artifacts         map[string]artifact.Output // populated by artifact phase (shared, read-only during service phase)
 	tempDir           string
 	envDir            string
+	hostEnv           map[string]string // host process env from SDK
 	log               *EventLog
 	envName           string
 	instanceID        string
@@ -246,7 +247,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			service: sc.name,
 		}
 
-		env, err := BuildServiceEnv(sc.name, sc.ingresses, sc.egresses, sc.tempDir, sc.envDir)
+		env, err := BuildServiceEnv(sc.name, sc.ingresses, sc.egresses, sc.tempDir, sc.envDir, sc.hostEnv)
 		if err != nil {
 			return fmt.Errorf("build service env: %w", err)
 		}
@@ -265,7 +266,7 @@ func runWithLifecycle(sc *serviceContext) run.Runner {
 			Stdout:      &teeWriter{logWriter, "stdout"},
 			Stderr:      &teeWriter{logWriter, "stderr"},
 			BuildEnv: func(ingresses, egresses map[string]spec.Endpoint) (map[string]string, error) {
-				return BuildServiceEnv(sc.name, ingresses, egresses, sc.tempDir, sc.envDir)
+				return BuildServiceEnv(sc.name, ingresses, egresses, sc.tempDir, sc.envDir, sc.hostEnv)
 			},
 			Callback: func(ctx context.Context, name, callbackType string) error {
 				return dispatchCallback(ctx, sc, name, callbackType)

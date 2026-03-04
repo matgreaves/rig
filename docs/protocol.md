@@ -155,6 +155,7 @@ The JSON body sent to `POST /environments`.
 | `name` | string | Yes | Environment identifier (typically the test name) |
 | `services` | object | Yes | Map of service name to service spec. At least one required. |
 | `observe` | boolean | No | Enable transparent traffic proxying. Default `false`. |
+| `host_env` | object | No | Host process environment variables (string→string map). Merged as a base layer under wiring env vars for process/go service types so child processes inherit PATH, JAVA_HOME, etc. |
 
 ### Service
 

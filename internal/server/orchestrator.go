@@ -165,6 +165,7 @@ func (o *Orchestrator) Orchestrate(env *spec.Environment) (run.Runner, string, s
 				svcType:    svcType,
 				tempDir:    tempDir,
 				envDir:     envDir,
+				hostEnv:    env.HostEnv,
 				log:        o.Log,
 				envName:    env.Name,
 				instanceID: instanceID,
