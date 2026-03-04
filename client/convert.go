@@ -345,7 +345,7 @@ func s3ToSpec(d *S3Def, handlers map[string]hookFunc) (specService, error) {
 	return specService{
 		Type: "s3",
 		Ingresses: map[string]specIngressSpec{
-			"default": {Protocol: TCP, ContainerPort: 8333},
+			"default": {Protocol: TCP, ContainerPort: 9000},
 		},
 		Egresses: egressesToSpec(d.egresses),
 		Hooks:    hooks,

@@ -121,7 +121,7 @@ rig.Redis().Image("redis:6-alpine")
 
 ### S3
 
-Managed S3-compatible object storage backed by SeaweedFS.
+Managed S3-compatible object storage backed by MinIO.
 
 ```go
 rig.S3()

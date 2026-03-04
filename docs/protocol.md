@@ -252,10 +252,10 @@ Each service type reads type-specific fields from `config`:
 - Published attributes: `REDIS_URL` (`redis://${HOST}:${PORT}/{db}`)
 
 **`s3`**: no config fields
-- Default ingress: single TCP on port 8333
-- Backed by SeaweedFS (`chrislusf/seaweedfs:4.13`) in S3-compatible mode
+- Default ingress: single TCP on port 9000
+- Backed by MinIO (`minio/minio:latest`)
 - Pooled: shares a single container across test environments; each environment gets an isolated bucket
-- Published attributes: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
+- Published attributes: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rigadmin`), `AWS_SECRET_ACCESS_KEY` (`rigadmin`)
 
 **`sqs`**: no config fields
 - Default ingress: single TCP on port 9324

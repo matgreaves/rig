@@ -171,11 +171,11 @@ rig.Redis().Image("redis:6-alpine")
 
 ### S3 (`"s3"`)
 
-Managed S3-compatible object storage backed by SeaweedFS.
+Managed S3-compatible object storage backed by MinIO.
 
-- **No user-defined ingress**: fixed TCP on port 8333
-- **Published attributes**: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
-- **Pooled**: shares a single SeaweedFS container across test environments; each gets an isolated bucket
+- **No user-defined ingress**: fixed TCP on port 9000
+- **Published attributes**: `S3_ENDPOINT` (`http://${HOST}:${PORT}`), `S3_BUCKET` (bucket name), `AWS_ACCESS_KEY_ID` (`rigadmin`), `AWS_SECRET_ACCESS_KEY` (`rigadmin`)
+- **Pooled**: shares a single MinIO container across test environments; each gets an isolated bucket
 
 `S3_ENDPOINT` uses template variables (`${HOST}`, `${PORT}`) so it stays correct through proxy address rewriting. The bucket name is assigned automatically by the pool.
 

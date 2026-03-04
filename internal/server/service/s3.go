@@ -12,7 +12,7 @@ import (
 )
 
 // S3 implements Type and ArtifactProvider for the "s3" builtin service type.
-// It uses a Pool to share a single SeaweedFS container across environments,
+// It uses a Pool to share a single MinIO container across environments,
 // providing per-test bucket isolation.
 type S3 struct {
 	pool   *Pool
@@ -24,7 +24,7 @@ func NewS3(pool *Pool) *S3 {
 	return &S3{pool: pool}
 }
 
-// Artifacts returns a DockerPull artifact for the SeaweedFS image.
+// Artifacts returns a DockerPull artifact for the MinIO image.
 func (s *S3) Artifacts(params ArtifactParams) ([]artifact.Artifact, error) {
 	return []artifact.Artifact{{
 		Key:      "docker:" + s3DefaultImage,
@@ -57,8 +57,8 @@ func (s *S3) Publish(ctx context.Context, params PublishParams) (map[string]spec
 	for name, ep := range endpoints {
 		connect.S3Endpoint.Set(ep.Attributes, "http://${HOST}:${PORT}")
 		connect.S3Bucket.Set(ep.Attributes, lease.ID)
-		connect.S3AccessKeyID.Set(ep.Attributes, "rig")
-		connect.S3SecretAccessKey.Set(ep.Attributes, "rig")
+		connect.S3AccessKeyID.Set(ep.Attributes, s3AccessKey)
+		connect.S3SecretAccessKey.Set(ep.Attributes, s3SecretKey)
 		endpoints[name] = ep
 	}
 

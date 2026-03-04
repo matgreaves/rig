@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -21,11 +20,12 @@ import (
 )
 
 const (
-	s3DefaultImage = "chrislusf/seaweedfs:4.13"
-	s3ContainerCmd = "server -s3 -s3.iam=false"
+	s3DefaultImage = "minio/minio:latest"
+	s3AccessKey    = "rigadmin"
+	s3SecretKey    = "rigadmin"
 )
 
-// NewS3Pool creates a Pool backed by SeaweedFS containers. A single shared
+// NewS3Pool creates a Pool backed by MinIO containers. A single shared
 // container per rigd process provides S3-compatible object storage;
 // individual test environments get isolated buckets within it.
 //
@@ -40,7 +40,7 @@ func NewS3Pool(pid int) *Pool {
 	}, 10*time.Minute)
 }
 
-// s3Backend implements Backend for SeaweedFS Docker containers.
+// s3Backend implements Backend for MinIO Docker containers.
 type s3Backend struct {
 	containerName string
 	containerID   string
@@ -53,7 +53,7 @@ type s3Backend struct {
 	s3Client *s3.Client
 }
 
-// Start creates and starts a shared SeaweedFS container.
+// Start creates and starts a shared MinIO container.
 func (b *s3Backend) Start(ctx context.Context) (string, int, error) {
 	cli, err := dockerutil.Client()
 	if err != nil {
@@ -63,12 +63,16 @@ func (b *s3Backend) Start(ctx context.Context) (string, int, error) {
 	// If a same-name container exists (from a previous crash), remove it.
 	cli.ContainerRemove(ctx, b.containerName, container.RemoveOptions{Force: true})
 
-	containerPort := nat.Port("8333/tcp")
+	containerPort := nat.Port("9000/tcp")
 
 	config := &container.Config{
 		Image:        s3DefaultImage,
-		Cmd:          strings.Fields(s3ContainerCmd),
+		Cmd:          []string{"server", "/data"},
 		ExposedPorts: nat.PortSet{containerPort: {}},
+		Env: []string{
+			"MINIO_ROOT_USER=" + s3AccessKey,
+			"MINIO_ROOT_PASSWORD=" + s3SecretKey,
+		},
 	}
 
 	hostConfig := &container.HostConfig{
@@ -102,7 +106,7 @@ func (b *s3Backend) Start(ctx context.Context) (string, int, error) {
 
 	bindings, ok := inspect.NetworkSettings.Ports[containerPort]
 	if !ok || len(bindings) == 0 {
-		return "", 0, fmt.Errorf("no port binding for 8333")
+		return "", 0, fmt.Errorf("no port binding for 9000")
 	}
 	port, err := strconv.Atoi(bindings[0].HostPort)
 	if err != nil {
@@ -112,19 +116,18 @@ func (b *s3Backend) Start(ctx context.Context) (string, int, error) {
 	b.host = "127.0.0.1"
 	b.port = port
 
-	// Wait for SeaweedFS S3 gateway to be ready.
+	// Wait for MinIO to be ready.
 	if err := b.waitReady(ctx); err != nil {
 		return "", 0, fmt.Errorf("wait for ready: %w", err)
 	}
 
 	// Create a reusable S3 client for bucket management.
-	// SeaweedFS with -s3.iam=false doesn't check credentials, but the
-	// AWS SDK requires non-empty values. BaseEndpoint overrides the
-	// default S3 endpoint; UsePathStyle prevents bucket-subdomain rewriting.
+	// BaseEndpoint overrides the default S3 endpoint; UsePathStyle
+	// prevents bucket-subdomain rewriting.
 	b.s3Client = s3.New(s3.Options{
 		BaseEndpoint: aws.String(fmt.Sprintf("http://127.0.0.1:%d", port)),
 		Region:       "us-east-1",
-		Credentials:  credentials.NewStaticCredentialsProvider("rig", "rig", ""),
+		Credentials:  credentials.NewStaticCredentialsProvider(s3AccessKey, s3SecretKey, ""),
 		UsePathStyle: true,
 	})
 
@@ -145,7 +148,7 @@ func (b *s3Backend) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	timeout := 10
+	timeout := 5
 	cli.ContainerStop(ctx, b.containerID, container.StopOptions{Timeout: &timeout})
 	cli.ContainerRemove(ctx, b.containerID, container.RemoveOptions{Force: true})
 
@@ -200,15 +203,14 @@ func (b *s3Backend) DropLease(ctx context.Context, id string) {
 	})
 }
 
-// waitReady polls the SeaweedFS S3 endpoint until it responds.
+// waitReady polls the MinIO health endpoint until it responds.
 func (b *s3Backend) waitReady(ctx context.Context) error {
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d", b.port)
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/minio/health/live", b.port)
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.After(60 * time.Second)
 
 	for {
-		// Try a ListBuckets-style request (GET /).
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err == nil {
 			resp, err := client.Do(req)
 			if err == nil {
@@ -224,9 +226,8 @@ func (b *s3Backend) waitReady(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			return fmt.Errorf("SeaweedFS S3 not ready after 60s")
+			return fmt.Errorf("MinIO not ready after 60s")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
-
