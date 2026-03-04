@@ -10,8 +10,8 @@ import (
 // InsertTestNode adds a virtual ~test service node to the environment.
 // The ~test node has an egress to every real service's every ingress,
 // using a naming convention that maps back to service/ingress pairs:
-//   - single-ingress or default ingress: egress name = service name
-//   - non-default ingress on multi-ingress service: egress name = "service~ingress"
+//   - default ingress: egress name = service name
+//   - non-default ingress: egress name = "service~ingress"
 //
 // The ~test node has no ingresses. Its waitForEgressesStep gates on all
 // real services being READY, and emitEnvironmentUp fires from its lifecycle.
@@ -34,7 +34,7 @@ func InsertTestNode(env *spec.Environment) {
 		}
 		for ingressName := range svc.Ingresses {
 			egressName := svcName
-			if ingressName != "default" && len(svc.Ingresses) > 1 {
+			if ingressName != "default" {
 				egressName = svcName + "~" + ingressName
 			}
 			egresses[egressName] = spec.EgressSpec{

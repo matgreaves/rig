@@ -578,6 +578,74 @@ func TestServer(t *testing.T) {
 		}
 	})
 
+	t.Run("SingleNamedIngress", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Service with a single non-default ingress named "http".
+		// The echo binary accepts -ingress to listen on a named ingress.
+		// Verify environment.up publishes the endpoint under "http", not "default".
+		envSpec := map[string]any{
+			"name": "test-single-named-ingress",
+			"services": map[string]any{
+				"echo": map[string]any{
+					"type":   "process",
+					"config": mustJSON(t, service.ProcessConfig{Command: echoBin}),
+					"args":   []string{"-ingress", "http"},
+					"ingresses": map[string]any{
+						"http": map[string]any{"protocol": "http"},
+					},
+				},
+			},
+		}
+		body := mustJSON(t, envSpec)
+		resp, err := http.Post(ts.URL+"/environments", "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		var created map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		id := created["id"]
+		defer func() {
+			req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/environments/"+id, nil)
+			http.DefaultClient.Do(req)
+		}()
+
+		events := sseEvents(t, ctx, ts.URL+"/environments/"+id+"/events")
+		up := waitForEvent(t, ctx, events, func(e server.Event) bool {
+			return e.Type == server.EventEnvironmentUp
+		})
+
+		// The ingress map should have key "http", not "default".
+		echoIngresses, ok := up.Ingresses["echo"]
+		if !ok {
+			t.Fatal("environment.up missing 'echo' in ingresses map")
+		}
+		if _, ok := echoIngresses["http"]; !ok {
+			t.Errorf("ingress map has keys %v, want 'http'", keys(echoIngresses))
+		}
+		if _, ok := echoIngresses["default"]; ok {
+			t.Error("ingress map should not have 'default' key for a service with only a named ingress")
+		}
+
+		// Verify the endpoint is reachable.
+		ep := echoIngresses["http"]
+		httpResp, err := http.Get("http://" + ep.HostPort)
+		if err != nil {
+			t.Fatalf("GET echo endpoint: %v", err)
+		}
+		httpResp.Body.Close()
+		if httpResp.StatusCode != http.StatusOK {
+			t.Errorf("echo response status = %d, want 200", httpResp.StatusCode)
+		}
+	})
+
 	t.Run("ConcurrentDelete", func(t *testing.T) {
 		t.Parallel()
 
@@ -645,4 +713,12 @@ func TestServer(t *testing.T) {
 			t.Errorf("expected exactly 1 DELETE to return 404, got: %v", statuses)
 		}
 	})
+}
+
+func keys[K comparable, V any](m map[K]V) []K {
+	ks := make([]K, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
 }

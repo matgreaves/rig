@@ -379,6 +379,7 @@ func emitEvent(sc *serviceContext, eventType EventType) run.Runner {
 //
 // The ~test node's egresses map back to real services via naming convention:
 //   - egress "api" → ingresses["api"]["default"]
+//   - egress "api~grpc" → ingresses["api"]["grpc"]
 //   - egress "temporal~ui" → ingresses["temporal"]["ui"]
 //
 // It also waits for any no-ingress real services (workers) that aren't

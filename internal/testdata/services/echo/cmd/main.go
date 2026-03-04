@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,9 +11,17 @@ import (
 )
 
 func main() {
+	ingress := flag.String("ingress", "", "ingress name (default: \"default\")")
+	flag.Parse()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := echo.Run(ctx); err != nil {
+
+	run := echo.Run
+	if *ingress != "" {
+		run = echo.RunOn(*ingress)
+	}
+	if err := run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "echo: %v\n", err)
 		os.Exit(1)
 	}
