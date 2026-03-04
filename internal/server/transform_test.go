@@ -86,6 +86,29 @@ func TestInsertTestNode_NoIngress(t *testing.T) {
 	is.Equal(len(testSvc.Egresses), 0) // no-ingress services are skipped
 }
 
+func TestInsertTestNode_SingleNamedIngress(t *testing.T) {
+	is := is.New(t)
+
+	env := &spec.Environment{
+		Name: "test",
+		Services: map[string]spec.Service{
+			"api": {
+				Type: "go",
+				Ingresses: map[string]spec.IngressSpec{
+					"grpc": {Protocol: spec.GRPC},
+				},
+			},
+		},
+	}
+
+	InsertTestNode(env)
+
+	testSvc := env.Services["~test"]
+	is.Equal(len(testSvc.Egresses), 1)
+	is.Equal(testSvc.Egresses["api~grpc"].Service, "api")
+	is.Equal(testSvc.Egresses["api~grpc"].Ingress, "grpc")
+}
+
 func TestTransformObserve_BasicEdge(t *testing.T) {
 	is := is.New(t)
 

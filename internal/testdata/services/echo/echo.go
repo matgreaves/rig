@@ -9,12 +9,28 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/matgreaves/rig/connect"
 	"github.com/matgreaves/rig/connect/httpx"
 )
 
 // Run starts the echo HTTP server. It reads wiring from ctx (via
 // connect.ParseWiring) and blocks until ctx is cancelled.
 func Run(ctx context.Context) error {
+	return httpx.ListenAndServe(ctx, handler())
+}
+
+// RunOn returns a run function that listens on the named ingress.
+func RunOn(ingress string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		w, err := connect.ParseWiring(ctx)
+		if err != nil {
+			return err
+		}
+		return httpx.Serve(ctx, w.Ingress(ingress), handler())
+	}
+}
+
+func handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "echo: %s %s", r.Method, r.URL.Path)
@@ -22,5 +38,5 @@ func Run(ctx context.Context) error {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	return httpx.ListenAndServe(ctx, mux)
+	return mux
 }
