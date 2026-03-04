@@ -335,8 +335,8 @@ func TestWireTypeRoundTrip(t *testing.T) {
 		if svc.Ingresses["default"].Protocol != spec.TCP {
 			t.Errorf("mys3 default protocol = %q, want tcp", svc.Ingresses["default"].Protocol)
 		}
-		if svc.Ingresses["default"].ContainerPort != 8333 {
-			t.Errorf("mys3 container_port = %d, want 8333", svc.Ingresses["default"].ContainerPort)
+		if svc.Ingresses["default"].ContainerPort != 9000 {
+			t.Errorf("mys3 container_port = %d, want 9000", svc.Ingresses["default"].ContainerPort)
 		}
 	}
 

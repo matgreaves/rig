@@ -14,7 +14,7 @@ import (
 
 // TestS3PoolSpeedup measures the incremental cost of adding a test
 // environment to a warm pool (new bucket) versus starting a fresh
-// SeaweedFS container from scratch. This is a one-shot comparison for PR
+// MinIO container from scratch. This is a one-shot comparison for PR
 // documentation, not a permanent test.
 func TestS3PoolSpeedup(t *testing.T) {
 	if testing.Short() {
@@ -30,12 +30,12 @@ func TestS3PoolSpeedup(t *testing.T) {
 		t.Skipf("Docker daemon not reachable: %v", err)
 	}
 
-	const seaweedImage = s3DefaultImage
+	const minioImage = s3DefaultImage
 	pid := os.Getpid()
 
 	// Pre-pull so image pull time doesn't skew results.
-	t.Log("pre-pulling", seaweedImage)
-	rc, err := cli.ImagePull(ctx, seaweedImage, image.PullOptions{})
+	t.Log("pre-pulling", minioImage)
+	rc, err := cli.ImagePull(ctx, minioImage, image.PullOptions{})
 	if err != nil {
 		t.Fatalf("image pull: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestS3PoolSpeedup(t *testing.T) {
 	defer pool.Close()
 
 	warmStart := time.Now()
-	first, err := pool.Acquire(ctx, seaweedImage)
+	first, err := pool.Acquire(ctx, minioImage)
 	if err != nil {
 		t.Fatalf("pool cold start: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestS3PoolSpeedup(t *testing.T) {
 
 	// --- Pooled: incremental lease on warm pool ---
 	incrStart := time.Now()
-	second, err := pool.Acquire(ctx, seaweedImage)
+	second, err := pool.Acquire(ctx, minioImage)
 	if err != nil {
 		t.Fatalf("pool incremental acquire: %v", err)
 	}

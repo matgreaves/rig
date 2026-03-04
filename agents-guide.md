@@ -42,7 +42,7 @@ Root module has zero external dependencies. `connect/pgx` and `connect/temporalx
 | `rig.Process("/path/to/bin")` | Pre-built binary | HTTP |
 | `rig.Postgres()` | Managed Postgres container | TCP (5432) |
 | `rig.Redis()` | Managed Redis container | TCP (6379) |
-| `rig.S3()` | Managed S3 storage (SeaweedFS) | TCP (8333) |
+| `rig.S3()` | Managed S3 storage (MinIO) | TCP (9000) |
 | `rig.SQS()` | Managed SQS queue (ElasticMQ) | TCP (9324) |
 | `rig.Temporal()` | Managed Temporal dev server | gRPC |
 

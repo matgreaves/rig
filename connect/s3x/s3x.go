@@ -33,7 +33,7 @@ func Bucket(ep connect.Endpoint) string {
 // Connect creates an S3 client from a rig endpoint.
 // It reads S3_ENDPOINT, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY from
 // the endpoint attributes. When S3_ENDPOINT is set (custom backend like
-// SeaweedFS or MinIO), path-style access is enabled automatically since
+// MinIO or similar), path-style access is enabled automatically since
 // virtual-hosted addressing requires wildcard DNS.
 func Connect(ep connect.Endpoint) *s3.Client {
 	endpoint, hasEndpoint := connect.S3Endpoint.Get(ep)

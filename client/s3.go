@@ -16,7 +16,7 @@ type S3Def struct {
 
 func (*S3Def) rigService() {}
 
-// S3 creates an S3 service definition backed by SeaweedFS.
+// S3 creates an S3 service definition backed by MinIO.
 // Each environment gets an isolated bucket assigned automatically by the
 // server.
 //
