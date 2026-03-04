@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 )
 
@@ -27,6 +28,7 @@ func envToSpec(testName string, services Services, handlers map[string]hookFunc,
 		Name:     testName,
 		Services: specs,
 		Observe:  observe,
+		HostEnv:  captureHostEnv(),
 	}, nil
 }
 
@@ -366,4 +368,16 @@ func sqsToSpec(d *SQSDef, handlers map[string]hookFunc) (specService, error) {
 		Egresses: egressesToSpec(d.egresses),
 		Hooks:    hooks,
 	}, nil
+}
+
+// captureHostEnv returns the current process environment as a map.
+func captureHostEnv() map[string]string {
+	environ := os.Environ()
+	env := make(map[string]string, len(environ))
+	for _, entry := range environ {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			env[k] = v
+		}
+	}
+	return env
 }

@@ -67,13 +67,12 @@ func (Go) Runner(params StartParams) run.Runner {
 	}
 
 	return run.Process{
-		Name:         params.ServiceName,
-		Path:         out.Path,
-		Args:         expandAll(params.Args, params.Env),
-		Env:          params.Env,
-		InheritOSEnv: true,
-		Stdout:       params.Stdout,
-		Stderr:       params.Stderr,
+		Name:   params.ServiceName,
+		Path:   out.Path,
+		Args:   expandAll(params.Args, params.Env),
+		Env:    params.Env,
+		Stdout: params.Stdout,
+		Stderr: params.Stderr,
 	}
 }
 

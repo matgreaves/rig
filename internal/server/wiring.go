@@ -25,6 +25,7 @@ func BuildServiceEnv(
 	egresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
+	hostEnv map[string]string,
 ) (map[string]string, error) {
 	// Resolve attribute templates against each endpoint's Host/Port.
 	// This is the output boundary — callers pass endpoints with templates
@@ -39,7 +40,12 @@ func BuildServiceEnv(
 		return nil, fmt.Errorf("resolve egress attributes: %w", err)
 	}
 
-	env := make(map[string]string)
+	// Start with host env as the base layer. Wiring vars written below
+	// take priority over anything from the host.
+	env := make(map[string]string, len(hostEnv))
+	for k, v := range hostEnv {
+		env[k] = v
+	}
 
 	// RIG_WIRING: structured wiring as JSON. Preferred over flat env vars.
 	wiring := WiringContext{
@@ -74,6 +80,7 @@ func BuildInitHookEnv(
 	ingresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
+	hostEnv map[string]string,
 ) (map[string]string, error) {
 	// Resolve attribute templates at this output boundary.
 	resolvedIngresses, err := resolveEndpointMap(ingresses)
@@ -81,7 +88,10 @@ func BuildInitHookEnv(
 		return nil, fmt.Errorf("resolve ingress attributes: %w", err)
 	}
 
-	env := make(map[string]string)
+	env := make(map[string]string, len(hostEnv))
+	for k, v := range hostEnv {
+		env[k] = v
+	}
 
 	// Service-level attributes.
 	env["RIG_TEMP_DIR"] = tempDir
@@ -102,9 +112,10 @@ func BuildPrestartHookEnv(
 	egresses map[string]spec.Endpoint,
 	tempDir string,
 	envDir string,
+	hostEnv map[string]string,
 ) (map[string]string, error) {
 	// Prestart hooks have the same env as the service itself.
-	return BuildServiceEnv(serviceName, ingresses, egresses, tempDir, envDir)
+	return BuildServiceEnv(serviceName, ingresses, egresses, tempDir, envDir, hostEnv)
 }
 
 // addIngressAttrs adds ingress attributes to the env map.
