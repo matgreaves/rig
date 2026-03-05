@@ -13,7 +13,7 @@ import (
 	"github.com/matgreaves/run"
 )
 
-const kafkaDefaultImage = "redpandadata/redpanda:latest"
+const kafkaDefaultImage = "redpandadata/redpanda:v24.3.1"
 
 // KafkaConfig is the type-specific config for "kafka" services.
 type KafkaConfig struct {
@@ -47,6 +47,9 @@ func (Kafka) Runner(params StartParams) run.Runner {
 		Cmd: []string{
 			"redpanda", "start",
 			"--mode", "dev-container",
+			"--smp", "1",
+			"--memory", "256M",
+			"--overprovisioned",
 			"--kafka-addr", "0.0.0.0:9092",
 			"--schema-registry-addr", "0.0.0.0:8081",
 		},
