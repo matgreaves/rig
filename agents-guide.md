@@ -44,6 +44,7 @@ Root module has zero external dependencies. `connect/pgx` and `connect/temporalx
 | `rig.Redis()` | Managed Redis container | TCP (6379) |
 | `rig.S3()` | Managed S3 storage (MinIO) | TCP (9000) |
 | `rig.SQS()` | Managed SQS queue (ElasticMQ) | TCP (9324) |
+| `rig.Kafka()` | Managed Kafka broker (Redpanda) | Kafka (9092) + HTTP (8081) |
 | `rig.Temporal()` | Managed Temporal dev server | gRPC |
 
 All builders use method chaining: `.Egress("name")`, `.NoIngress()`, `.Ingress("name", def)`, `.Args(...)`, `.InitHook(fn)`, `.PrestartHook(fn)`.
@@ -88,6 +89,10 @@ connect.S3Bucket.MustGet(ep)         // "rig-1"
 connect.SQSEndpoint.MustGet(ep)      // "http://host:port"
 connect.SQSQueueURL.MustGet(ep)      // "http://host:port/queue/rig-1"
 
+// Kafka — no attributes, use endpoints directly
+env.Endpoint("kafka").HostPort                    // bootstrap servers
+env.Endpoint("kafka", "schema-registry").HostPort // schema registry host:port
+
 // Temporal
 connect.TemporalAddress.MustGet(ep)    // "host:port"
 connect.TemporalNamespace.MustGet(ep)  // "rig_ns_0"
@@ -107,6 +112,10 @@ Define custom attributes with `connect.Attr[T]{Name: "MY_ATTR"}`.
 // SQL init (server-side, no driver needed):
 rig.Postgres().InitSQL("CREATE TABLE ...")
 rig.Postgres().InitSQLDir("./migrations")
+
+// Schema registration (server-side, Kafka only):
+rig.Kafka().AvroSchema("schemas/user-value.avsc")
+rig.Kafka().ProtoSchema("schemas/order-key.proto")
 
 // Exec inside container (server-side):
 .Exec("redis-cli", "SET", "key", "value")
@@ -283,6 +292,7 @@ Nine Go modules: root `go.mod`, `internal/go.mod`, `cmd/rig/go.mod`, `connect/pg
 - `client/redis.go` — `Redis` builder
 - `client/s3.go` — `S3` builder
 - `client/sqs.go` — `SQS` builder
+- `client/kafka.go` — `Kafka` builder
 - `client/temporal.go` — `Temporal` builder
 - `client/environment.go` — `Environment`, `Endpoint()` lookup
 - `connect/wiring.go` — `Wiring`, `ParseWiring`

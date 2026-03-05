@@ -135,6 +135,22 @@ Managed SQS-compatible message queue backed by ElasticMQ.
 rig.SQS()
 ```
 
+### Kafka
+
+Managed Kafka broker backed by Redpanda. Includes a Confluent-compatible schema registry. Each test gets a fresh container.
+
+```go
+rig.Kafka()
+rig.Kafka().AvroSchema("schemas/user-value.avsc")
+```
+
+Access endpoints:
+
+```go
+ep := env.Endpoint("kafka")                        // bootstrap servers = ep.HostPort
+sr := env.Endpoint("kafka", "schema-registry")     // schema registry
+```
+
 ### Temporal
 
 Managed Temporal dev server. Downloads the CLI binary on first use.
@@ -203,6 +219,10 @@ bucket := connect.S3Bucket.MustGet(ep)         // "rig-1"
 ep := env.Endpoint("queue")
 sqsEndpoint := connect.SQSEndpoint.MustGet(ep) // "http://127.0.0.1:9324"
 queueURL := connect.SQSQueueURL.MustGet(ep)    // "http://127.0.0.1:9324/queue/rig-1"
+
+// Kafka — no attributes, use endpoints directly
+brokers := env.Endpoint("kafka").HostPort                    // "127.0.0.1:9092"
+srHost := env.Endpoint("kafka", "schema-registry").HostPort  // "127.0.0.1:8081"
 
 // Temporal
 ep = env.Endpoint("temporal")
