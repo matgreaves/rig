@@ -14,14 +14,17 @@ import (
 
 // Kafka wire protocol constants.
 const (
-	kafkaAPIKeyMetadata = 3
-	kafkaMaxFrameSize   = 256 * 1024 * 1024 // 256 MB — matches Kafka's default message.max.bytes
+	kafkaAPIKeyMetadata        = 3
+	kafkaAPIKeyFindCoordinator = 10
+	kafkaMaxFrameSize          = 256 * 1024 * 1024 // 256 MB — matches Kafka's default message.max.bytes
 )
 
-// apiInfo tracks the API key and version for a correlated request/response pair.
+// apiInfo tracks the API key, version, timing, and size for a correlated request/response pair.
 type apiInfo struct {
-	apiKey     int16
-	apiVersion int16
+	apiKey      int16
+	apiVersion  int16
+	startTime   time.Time
+	requestSize int64
 }
 
 // correlationTracker maps correlation IDs to their request API key and version.
@@ -34,9 +37,9 @@ func newCorrelationTracker() *correlationTracker {
 	return &correlationTracker{m: make(map[int32]apiInfo)}
 }
 
-func (t *correlationTracker) track(correlationID int32, key int16, version int16) {
+func (t *correlationTracker) track(correlationID int32, key int16, version int16, startTime time.Time, requestSize int64) {
 	t.mu.Lock()
-	t.m[correlationID] = apiInfo{apiKey: key, apiVersion: version}
+	t.m[correlationID] = apiInfo{apiKey: key, apiVersion: version, startTime: startTime, requestSize: requestSize}
 	t.mu.Unlock()
 }
 
@@ -128,9 +131,18 @@ func (f *Forwarder) handleKafkaConn(ctx context.Context, client net.Conn) {
 	}()
 
 	// broker → client: intercept Metadata responses and rewrite broker addresses.
+	respRelay := &kafkaResponseRelay{
+		tracker:   tracker,
+		proxyHost: proxyHost,
+		proxyPort: proxyPort,
+		source:    f.Source,
+		target:    f.TargetSvc,
+		ingress:   f.Ingress,
+		emit:      f.Emit,
+	}
 	go func() {
 		defer wg.Done()
-		n := relayKafkaResponses(target, client, tracker, proxyHost, proxyPort)
+		n := respRelay.relay(target, client)
 		bytesOut.Store(n)
 		if tc, ok := client.(*net.TCPConn); ok {
 			tc.CloseWrite()
@@ -180,7 +192,7 @@ func relayKafkaRequests(src io.Reader, dst io.Writer, tracker *correlationTracke
 			apiKey := int16(binary.BigEndian.Uint16(payload[0:2]))
 			apiVersion := int16(binary.BigEndian.Uint16(payload[2:4]))
 			correlationID := int32(binary.BigEndian.Uint32(payload[4:8]))
-			tracker.track(correlationID, apiKey, apiVersion)
+			tracker.track(correlationID, apiKey, apiVersion, time.Now(), int64(4)+int64(frameLen))
 		}
 
 		// Forward the complete frame unchanged.
@@ -194,11 +206,23 @@ func relayKafkaRequests(src io.Reader, dst io.Writer, tracker *correlationTracke
 	}
 }
 
-// relayKafkaResponses reads Kafka response frames from src, checks the
-// correlation tracker to identify Metadata responses, rewrites broker
-// host:port entries in those responses, and forwards everything to dst.
+// kafkaResponseRelay holds the configuration for relaying Kafka response
+// frames from a broker back to a client, rewriting addresses as needed.
+type kafkaResponseRelay struct {
+	tracker   *correlationTracker
+	proxyHost string
+	proxyPort int32
+	source    string // for event emission
+	target    string
+	ingress   string
+	emit      func(Event) // nil to skip event emission
+}
+
+// relay reads Kafka response frames from src, checks the correlation tracker
+// to identify Metadata/FindCoordinator responses, rewrites broker host:port
+// entries, emits per-request events, and forwards everything to dst.
 // Returns total bytes forwarded.
-func relayKafkaResponses(src io.Reader, dst io.Writer, tracker *correlationTracker, proxyHost string, proxyPort int32) int64 {
+func (k *kafkaResponseRelay) relay(src io.Reader, dst io.Writer) int64 {
 	var total int64
 	hdr := make([]byte, 4)
 	for {
@@ -225,27 +249,52 @@ func relayKafkaResponses(src io.Reader, dst io.Writer, tracker *correlationTrack
 		}
 
 		correlationID := int32(binary.BigEndian.Uint32(payload[0:4]))
-		info, ok := tracker.lookup(correlationID)
+		info, ok := k.tracker.lookup(correlationID)
 
-		if !ok || info.apiKey != kafkaAPIKeyMetadata {
-			// Not a Metadata response — forward unchanged.
+		responseSize := int64(4) + int64(frameLen)
+
+		if ok && k.emit != nil {
+			latencyMs := float64(time.Since(info.startTime).Microseconds()) / 1000.0
+			k.emit(Event{
+				Type: "kafka.request.completed",
+				KafkaRequest: &KafkaRequestInfo{
+					Source:        k.source,
+					Target:        k.target,
+					Ingress:       k.ingress,
+					APIKey:        info.apiKey,
+					APIName:       kafkaAPIName(info.apiKey),
+					APIVersion:    info.apiVersion,
+					CorrelationID: correlationID,
+					LatencyMs:     latencyMs,
+					RequestSize:   info.requestSize,
+					ResponseSize:  responseSize,
+				},
+			})
+		}
+
+		var rewritten []byte
+		if ok {
+			var rewriteErr error
+			switch info.apiKey {
+			case kafkaAPIKeyMetadata:
+				rewritten, rewriteErr = rewriteMetadataResponse(payload, info.apiVersion, k.proxyHost, k.proxyPort)
+			case kafkaAPIKeyFindCoordinator:
+				rewritten, rewriteErr = rewriteFindCoordinatorResponse(payload, info.apiVersion, k.proxyHost, k.proxyPort)
+			}
+			if rewriteErr != nil {
+				rewritten = nil // fall through to forward original
+			}
+		}
+
+		if rewritten == nil {
+			// Forward unchanged.
 			if _, err := dst.Write(hdr); err != nil {
 				return total
 			}
 			if _, err := dst.Write(payload); err != nil {
 				return total
 			}
-			total += int64(4) + int64(frameLen)
-			continue
-		}
-
-		// Rewrite Metadata response.
-		rewritten, err := rewriteMetadataResponse(payload, info.apiVersion, proxyHost, proxyPort)
-		if err != nil {
-			// Rewrite failed — forward original frame unchanged.
-			dst.Write(hdr)
-			dst.Write(payload)
-			total += int64(4) + int64(frameLen)
+			total += responseSize
 			continue
 		}
 
@@ -259,6 +308,46 @@ func relayKafkaResponses(src io.Reader, dst io.Writer, tracker *correlationTrack
 			return total
 		}
 		total += int64(4 + len(rewritten))
+	}
+}
+
+// kafkaAPIName returns the human-readable name for a Kafka API key.
+func kafkaAPIName(key int16) string {
+	switch key {
+	case 0:
+		return "Produce"
+	case 1:
+		return "Fetch"
+	case 2:
+		return "ListOffsets"
+	case 3:
+		return "Metadata"
+	case 8:
+		return "OffsetCommit"
+	case 9:
+		return "OffsetFetch"
+	case 10:
+		return "FindCoordinator"
+	case 11:
+		return "JoinGroup"
+	case 12:
+		return "Heartbeat"
+	case 13:
+		return "LeaveGroup"
+	case 14:
+		return "SyncGroup"
+	case 18:
+		return "ApiVersions"
+	case 19:
+		return "CreateTopics"
+	case 20:
+		return "DeleteTopics"
+	case 22:
+		return "InitProducerId"
+	case 36:
+		return "SaslAuthenticate"
+	default:
+		return fmt.Sprintf("API-%d", key)
 	}
 }
 
@@ -378,6 +467,226 @@ func rewriteMetadataResponse(payload []byte, version int16, proxyHost string, pr
 	// Copy remaining bytes (cluster_id, controller_id, topics, etc.) verbatim.
 	w.writeRaw(r.remaining())
 
+	return w.bytes(), nil
+}
+
+// rewriteFindCoordinatorResponse parses a FindCoordinator response payload
+// and rewrites the coordinator host and port to point at the proxy.
+//
+// v0-3: single coordinator response.
+// v4+:  batch coordinators response (KIP-699).
+func rewriteFindCoordinatorResponse(payload []byte, version int16, proxyHost string, proxyPort int32) ([]byte, error) {
+	if version >= 4 {
+		return rewriteFindCoordinatorBatch(payload, proxyHost, proxyPort)
+	}
+	return rewriteFindCoordinatorSingle(payload, version, proxyHost, proxyPort)
+}
+
+// rewriteFindCoordinatorSingle handles v0-3 (single coordinator).
+//
+// Layout:
+//
+//	correlation_id (4)
+//	[v3: response header tag buffer]
+//	[v1+: throttle_time_ms (4)]
+//	error_code (2)
+//	[v1+: error_message (nullable string; compact nullable for v3)]
+//	node_id (4)
+//	host (string; compact string for v3) → REWRITE
+//	port (4) → REWRITE
+//	[v3: struct tag buffer]
+func rewriteFindCoordinatorSingle(payload []byte, version int16, proxyHost string, proxyPort int32) ([]byte, error) {
+	flexible := version >= 3
+	r := newKafkaReader(payload)
+	w := newKafkaWriter()
+
+	// correlation_id
+	cid, err := r.int32()
+	if err != nil {
+		return nil, err
+	}
+	w.writeInt32(cid)
+
+	// v3: response header tag buffer
+	if flexible {
+		tb, err := r.tagBuffer()
+		if err != nil {
+			return nil, err
+		}
+		w.writeTagBuffer(tb)
+	}
+
+	// v1+: throttle_time_ms
+	if version >= 1 {
+		throttle, err := r.int32()
+		if err != nil {
+			return nil, err
+		}
+		w.writeInt32(throttle)
+	}
+
+	// error_code
+	ec, err := r.int16()
+	if err != nil {
+		return nil, err
+	}
+	w.writeInt16(ec)
+
+	// v1+: error_message (nullable string)
+	if version >= 1 {
+		if flexible {
+			em, err := r.compactNullableString()
+			if err != nil {
+				return nil, err
+			}
+			w.writeCompactNullableString(em)
+		} else {
+			em, err := r.nullableString()
+			if err != nil {
+				return nil, err
+			}
+			w.writeNullableString(em)
+		}
+	}
+
+	// node_id
+	nodeID, err := r.int32()
+	if err != nil {
+		return nil, err
+	}
+	w.writeInt32(nodeID)
+
+	// host → rewrite
+	if flexible {
+		_, err = r.compactString()
+	} else {
+		_, err = r.string()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if flexible {
+		w.writeCompactString(proxyHost)
+	} else {
+		w.writeString(proxyHost)
+	}
+
+	// port → rewrite
+	if _, err := r.int32(); err != nil {
+		return nil, err
+	}
+	w.writeInt32(proxyPort)
+
+	// v3: struct tag buffer + remaining
+	w.writeRaw(r.remaining())
+	return w.bytes(), nil
+}
+
+// rewriteFindCoordinatorBatch handles v4+ (batch coordinators, KIP-699).
+//
+// Layout:
+//
+//	correlation_id (4)
+//	response header tag buffer
+//	throttle_time_ms (4)
+//	coordinators compact array, each:
+//	  key (compact string)
+//	  node_id (4)
+//	  host (compact string) → REWRITE
+//	  port (4) → REWRITE
+//	  error_code (2)
+//	  error_message (compact nullable string)
+//	  struct tag buffer
+//	response tag buffer
+func rewriteFindCoordinatorBatch(payload []byte, proxyHost string, proxyPort int32) ([]byte, error) {
+	r := newKafkaReader(payload)
+	w := newKafkaWriter()
+
+	// correlation_id
+	cid, err := r.int32()
+	if err != nil {
+		return nil, err
+	}
+	w.writeInt32(cid)
+
+	// response header tag buffer
+	tb, err := r.tagBuffer()
+	if err != nil {
+		return nil, err
+	}
+	w.writeTagBuffer(tb)
+
+	// throttle_time_ms
+	throttle, err := r.int32()
+	if err != nil {
+		return nil, err
+	}
+	w.writeInt32(throttle)
+
+	// coordinators compact array
+	n, err := r.uvarint()
+	if err != nil {
+		return nil, err
+	}
+	w.writeUvarint(n)
+	if n == 0 {
+		// null array
+		w.writeRaw(r.remaining())
+		return w.bytes(), nil
+	}
+	count := int(n) - 1
+
+	for i := 0; i < count; i++ {
+		// key (compact string)
+		key, err := r.compactString()
+		if err != nil {
+			return nil, err
+		}
+		w.writeCompactString(key)
+
+		// node_id
+		nodeID, err := r.int32()
+		if err != nil {
+			return nil, err
+		}
+		w.writeInt32(nodeID)
+
+		// host → rewrite
+		if _, err := r.compactString(); err != nil {
+			return nil, err
+		}
+		w.writeCompactString(proxyHost)
+
+		// port → rewrite
+		if _, err := r.int32(); err != nil {
+			return nil, err
+		}
+		w.writeInt32(proxyPort)
+
+		// error_code
+		ec, err := r.int16()
+		if err != nil {
+			return nil, err
+		}
+		w.writeInt16(ec)
+
+		// error_message (compact nullable string)
+		em, err := r.compactNullableString()
+		if err != nil {
+			return nil, err
+		}
+		w.writeCompactNullableString(em)
+
+		// struct tag buffer
+		stb, err := r.tagBuffer()
+		if err != nil {
+			return nil, err
+		}
+		w.writeTagBuffer(stb)
+	}
+
+	// response tag buffer + remaining
+	w.writeRaw(r.remaining())
 	return w.bytes(), nil
 }
 

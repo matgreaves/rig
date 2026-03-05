@@ -45,6 +45,8 @@ func renderDetail(w io.Writer, rows []trafficRow, index int) error {
 		renderGRPCDetail(w, r.Event.GRPCCall)
 	case typeConnectionClosed:
 		renderTCPDetail(w, r.Event.Connection)
+	case typeKafkaRequestCompleted:
+		renderKafkaDetail(w, r.Event.KafkaRequest)
 	}
 	return nil
 }
@@ -111,6 +113,15 @@ func renderGRPCDetail(w io.Writer, g *grpcCallInfo) {
 		fmt.Fprintf(w, "\n  %s\n", bold(label+":"))
 		writeHex(w, g.ResponseBody)
 	}
+}
+
+func renderKafkaDetail(w io.Writer, k *kafkaRequestInfo) {
+	fmt.Fprintf(w, "\n  %s        %s (key %d)\n", bold("API Name:"), k.APIName, k.APIKey)
+	fmt.Fprintf(w, "  %s     %d\n", bold("API Version:"), k.APIVersion)
+	fmt.Fprintf(w, "  %s  %d\n", bold("Correlation ID:"), k.CorrelationID)
+	fmt.Fprintf(w, "  %s    %s\n", bold("Request Size:"), formatBytes(k.RequestSize))
+	fmt.Fprintf(w, "  %s   %s\n", bold("Response Size:"), formatBytes(k.ResponseSize))
+	fmt.Fprintf(w, "  %s         %s\n", bold("Latency:"), formatLatency(k.LatencyMs))
 }
 
 func renderTCPDetail(w io.Writer, c *connectionInfo) {
