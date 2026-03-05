@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/matgreaves/rig/internal/spec"
 )
@@ -197,8 +198,8 @@ func TestKafkaReaderWriter_TagBuffer(t *testing.T) {
 func TestCorrelationTracker(t *testing.T) {
 	tracker := newCorrelationTracker()
 
-	tracker.track(1, 3, 5) // Metadata v5
-	tracker.track(2, 0, 2) // Produce v2
+	tracker.track(1, 3, 5, time.Time{}, 0) // Metadata v5
+	tracker.track(2, 0, 2, time.Time{}, 0) // Produce v2
 
 	info, ok := tracker.lookup(1)
 	if !ok {
@@ -628,7 +629,7 @@ func TestRewriteMetadataResponse_TruncatedPayload(t *testing.T) {
 
 func TestRelayKafkaResponses_RewriteFailureFallback(t *testing.T) {
 	tracker := newCorrelationTracker()
-	tracker.track(1, kafkaAPIKeyMetadata, 1) // Metadata v1
+	tracker.track(1, kafkaAPIKeyMetadata, 1, time.Time{}, 0) // Metadata v1
 
 	// Build a frame with a truncated metadata payload — correlation_id
 	// present but no broker data.
@@ -642,7 +643,7 @@ func TestRelayKafkaResponses_RewriteFailureFallback(t *testing.T) {
 	src.Write(truncated)
 
 	var dst bytes.Buffer
-	total := relayKafkaResponses(&src, &dst, tracker, "127.0.0.1", 19092)
+	total := testRelay(tracker, nil).relay(&src, &dst)
 
 	if total == 0 {
 		t.Fatal("expected non-zero bytes forwarded (fallback to original)")
@@ -708,7 +709,7 @@ func TestRelayKafkaRequests(t *testing.T) {
 
 func TestRelayKafkaResponses_PassThrough(t *testing.T) {
 	tracker := newCorrelationTracker()
-	tracker.track(1, 0, 2) // Produce, not Metadata
+	tracker.track(1, 0, 2, time.Time{}, 0) // Produce, not Metadata
 
 	var src bytes.Buffer
 	// Response: correlation_id=1, some body.
@@ -718,7 +719,7 @@ func TestRelayKafkaResponses_PassThrough(t *testing.T) {
 	copy(input, src.Bytes())
 
 	var dst bytes.Buffer
-	total := relayKafkaResponses(&src, &dst, tracker, "127.0.0.1", 19092)
+	total := testRelay(tracker, nil).relay(&src, &dst)
 
 	if total == 0 {
 		t.Fatal("expected non-zero bytes forwarded")
@@ -741,7 +742,7 @@ func TestRelayKafkaResponses_UnknownCorrelation(t *testing.T) {
 	copy(input, src.Bytes())
 
 	var dst bytes.Buffer
-	total := relayKafkaResponses(&src, &dst, tracker, "127.0.0.1", 19092)
+	total := testRelay(tracker, nil).relay(&src, &dst)
 
 	if total == 0 {
 		t.Fatal("expected non-zero bytes forwarded")
@@ -753,7 +754,7 @@ func TestRelayKafkaResponses_UnknownCorrelation(t *testing.T) {
 
 func TestRelayKafkaResponses_MetadataRewrite(t *testing.T) {
 	tracker := newCorrelationTracker()
-	tracker.track(42, kafkaAPIKeyMetadata, 1) // Metadata v1
+	tracker.track(42, kafkaAPIKeyMetadata, 1, time.Time{}, 0) // Metadata v1
 
 	// Build a Metadata v1 response with one broker at 10.0.0.5:9092.
 	payload := buildClassicMetadataResponse(42, 0,
@@ -768,7 +769,7 @@ func TestRelayKafkaResponses_MetadataRewrite(t *testing.T) {
 	src.Write(payload)
 
 	var dst bytes.Buffer
-	relayKafkaResponses(&src, &dst, tracker, "127.0.0.1", 19092)
+	testRelay(tracker, nil).relay(&src, &dst)
 
 	// Parse the output frame.
 	outBytes := dst.Bytes()
@@ -796,6 +797,411 @@ func TestRelayKafkaResponses_MetadataRewrite(t *testing.T) {
 	port, _ := r.int32()
 	if port != 19092 {
 		t.Errorf("port = %d, want 19092", port)
+	}
+}
+
+// --- FindCoordinator rewrite tests ---
+
+// buildClassicFindCoordinatorResponse builds a FindCoordinator v0-2 (classic encoding) response.
+func buildClassicFindCoordinatorResponse(correlationID int32, version int16, throttleMs int32, errorCode int16, errorMsg *string, nodeID int32, host string, port int32) []byte {
+	w := newKafkaWriter()
+	w.writeInt32(correlationID)
+	if version >= 1 {
+		w.writeInt32(throttleMs)
+	}
+	w.writeInt16(errorCode)
+	if version >= 1 {
+		w.writeNullableString(errorMsg)
+	}
+	w.writeInt32(nodeID)
+	w.writeString(host)
+	w.writeInt32(port)
+	return w.bytes()
+}
+
+// buildFlexibleFindCoordinatorResponse builds a FindCoordinator v3 (flexible encoding) response.
+func buildFlexibleFindCoordinatorResponse(correlationID int32, throttleMs int32, errorCode int16, errorMsg *string, nodeID int32, host string, port int32) []byte {
+	w := newKafkaWriter()
+	w.writeInt32(correlationID)
+	w.writeUvarint(0) // response header tag buffer (empty)
+	w.writeInt32(throttleMs)
+	w.writeInt16(errorCode)
+	w.writeCompactNullableString(errorMsg)
+	w.writeInt32(nodeID)
+	w.writeCompactString(host)
+	w.writeInt32(port)
+	w.writeUvarint(0) // struct tag buffer (empty)
+	return w.bytes()
+}
+
+type testCoordinator struct {
+	key      string
+	nodeID   int32
+	host     string
+	port     int32
+	errCode  int16
+	errMsg   *string
+}
+
+// buildBatchFindCoordinatorResponse builds a FindCoordinator v4+ (batch) response.
+func buildBatchFindCoordinatorResponse(correlationID int32, throttleMs int32, coordinators []testCoordinator) []byte {
+	w := newKafkaWriter()
+	w.writeInt32(correlationID)
+	w.writeUvarint(0) // response header tag buffer (empty)
+	w.writeInt32(throttleMs)
+	w.writeUvarint(uint64(len(coordinators)) + 1) // compact array count+1
+	for _, c := range coordinators {
+		w.writeCompactString(c.key)
+		w.writeInt32(c.nodeID)
+		w.writeCompactString(c.host)
+		w.writeInt32(c.port)
+		w.writeInt16(c.errCode)
+		w.writeCompactNullableString(c.errMsg)
+		w.writeUvarint(0) // struct tag buffer (empty)
+	}
+	w.writeUvarint(0) // response tag buffer (empty)
+	return w.bytes()
+}
+
+func TestRewriteFindCoordinatorResponse_V0(t *testing.T) {
+	// v0: no throttle, no error_message
+	w := newKafkaWriter()
+	w.writeInt32(10) // correlation_id
+	w.writeInt16(0)  // error_code
+	w.writeInt32(0)  // node_id
+	w.writeString("10.0.0.5")
+	w.writeInt32(9092)
+
+	rewritten, err := rewriteFindCoordinatorResponse(w.bytes(), 0, "127.0.0.1", 19092)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := newKafkaReader(rewritten)
+	corr, _ := r.int32()
+	if corr != 10 {
+		t.Errorf("correlation_id = %d, want 10", corr)
+	}
+	ec, _ := r.int16()
+	if ec != 0 {
+		t.Errorf("error_code = %d, want 0", ec)
+	}
+	nodeID, _ := r.int32()
+	if nodeID != 0 {
+		t.Errorf("node_id = %d, want 0", nodeID)
+	}
+	host, _ := r.string()
+	if host != "127.0.0.1" {
+		t.Errorf("host = %q, want 127.0.0.1", host)
+	}
+	port, _ := r.int32()
+	if port != 19092 {
+		t.Errorf("port = %d, want 19092", port)
+	}
+	if len(r.remaining()) != 0 {
+		t.Errorf("unexpected remaining bytes: %d", len(r.remaining()))
+	}
+}
+
+func TestRewriteFindCoordinatorResponse_V1(t *testing.T) {
+	errMsg := "none"
+	payload := buildClassicFindCoordinatorResponse(20, 1, 100, 0, &errMsg, 5, "broker.internal", 9092)
+
+	rewritten, err := rewriteFindCoordinatorResponse(payload, 1, "127.0.0.1", 29092)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := newKafkaReader(rewritten)
+	corr, _ := r.int32()
+	if corr != 20 {
+		t.Errorf("correlation_id = %d, want 20", corr)
+	}
+	throttle, _ := r.int32()
+	if throttle != 100 {
+		t.Errorf("throttle = %d, want 100", throttle)
+	}
+	ec, _ := r.int16()
+	if ec != 0 {
+		t.Errorf("error_code = %d, want 0", ec)
+	}
+	em, _ := r.nullableString()
+	if em == nil || *em != "none" {
+		t.Errorf("error_message = %v, want %q", em, "none")
+	}
+	nodeID, _ := r.int32()
+	if nodeID != 5 {
+		t.Errorf("node_id = %d, want 5", nodeID)
+	}
+	host, _ := r.string()
+	if host != "127.0.0.1" {
+		t.Errorf("host = %q, want 127.0.0.1", host)
+	}
+	port, _ := r.int32()
+	if port != 29092 {
+		t.Errorf("port = %d, want 29092", port)
+	}
+	if len(r.remaining()) != 0 {
+		t.Errorf("unexpected remaining bytes: %d", len(r.remaining()))
+	}
+}
+
+func TestRewriteFindCoordinatorResponse_V3(t *testing.T) {
+	payload := buildFlexibleFindCoordinatorResponse(30, 50, 0, nil, 1, "redpanda-0", 9092)
+
+	rewritten, err := rewriteFindCoordinatorResponse(payload, 3, "127.0.0.1", 39092)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := newKafkaReader(rewritten)
+	corr, _ := r.int32()
+	if corr != 30 {
+		t.Errorf("correlation_id = %d, want 30", corr)
+	}
+	_, err = r.tagBuffer() // response header tag buffer
+	if err != nil {
+		t.Fatal(err)
+	}
+	throttle, _ := r.int32()
+	if throttle != 50 {
+		t.Errorf("throttle = %d, want 50", throttle)
+	}
+	ec, _ := r.int16()
+	if ec != 0 {
+		t.Errorf("error_code = %d, want 0", ec)
+	}
+	em, _ := r.compactNullableString()
+	if em != nil {
+		t.Errorf("error_message = %v, want nil", *em)
+	}
+	nodeID, _ := r.int32()
+	if nodeID != 1 {
+		t.Errorf("node_id = %d, want 1", nodeID)
+	}
+	host, _ := r.compactString()
+	if host != "127.0.0.1" {
+		t.Errorf("host = %q, want 127.0.0.1", host)
+	}
+	port, _ := r.int32()
+	if port != 39092 {
+		t.Errorf("port = %d, want 39092", port)
+	}
+	// struct tag buffer
+	_, err = r.tagBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.remaining()) != 0 {
+		t.Errorf("unexpected remaining bytes: %d", len(r.remaining()))
+	}
+}
+
+func TestRewriteFindCoordinatorResponse_V4(t *testing.T) {
+	payload := buildBatchFindCoordinatorResponse(40, 0, []testCoordinator{
+		{key: "group-a", nodeID: 0, host: "broker-0.internal", port: 9092, errCode: 0, errMsg: nil},
+		{key: "group-b", nodeID: 1, host: "broker-1.internal", port: 9093, errCode: 15, errMsg: strPtr("not coordinator")},
+	})
+
+	rewritten, err := rewriteFindCoordinatorResponse(payload, 4, "127.0.0.1", 49092)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := newKafkaReader(rewritten)
+	corr, _ := r.int32()
+	if corr != 40 {
+		t.Errorf("correlation_id = %d, want 40", corr)
+	}
+	_, err = r.tagBuffer() // response header tag buffer
+	if err != nil {
+		t.Fatal(err)
+	}
+	throttle, _ := r.int32()
+	if throttle != 0 {
+		t.Errorf("throttle = %d, want 0", throttle)
+	}
+	countPlusOne, _ := r.uvarint()
+	if countPlusOne != 3 {
+		t.Errorf("coordinator count+1 = %d, want 3", countPlusOne)
+	}
+
+	// Coordinator 1
+	key1, _ := r.compactString()
+	if key1 != "group-a" {
+		t.Errorf("coordinator 0 key = %q, want group-a", key1)
+	}
+	nodeID1, _ := r.int32()
+	if nodeID1 != 0 {
+		t.Errorf("coordinator 0 node_id = %d, want 0", nodeID1)
+	}
+	host1, _ := r.compactString()
+	if host1 != "127.0.0.1" {
+		t.Errorf("coordinator 0 host = %q, want 127.0.0.1", host1)
+	}
+	port1, _ := r.int32()
+	if port1 != 49092 {
+		t.Errorf("coordinator 0 port = %d, want 49092", port1)
+	}
+	ec1, _ := r.int16()
+	if ec1 != 0 {
+		t.Errorf("coordinator 0 error_code = %d, want 0", ec1)
+	}
+	em1, _ := r.compactNullableString()
+	if em1 != nil {
+		t.Errorf("coordinator 0 error_message = %v, want nil", *em1)
+	}
+	_, _ = r.tagBuffer() // struct tag buffer
+
+	// Coordinator 2
+	key2, _ := r.compactString()
+	if key2 != "group-b" {
+		t.Errorf("coordinator 1 key = %q, want group-b", key2)
+	}
+	nodeID2, _ := r.int32()
+	if nodeID2 != 1 {
+		t.Errorf("coordinator 1 node_id = %d, want 1", nodeID2)
+	}
+	host2, _ := r.compactString()
+	if host2 != "127.0.0.1" {
+		t.Errorf("coordinator 1 host = %q, want 127.0.0.1", host2)
+	}
+	port2, _ := r.int32()
+	if port2 != 49092 {
+		t.Errorf("coordinator 1 port = %d, want 49092", port2)
+	}
+	ec2, _ := r.int16()
+	if ec2 != 15 {
+		t.Errorf("coordinator 1 error_code = %d, want 15", ec2)
+	}
+	em2, _ := r.compactNullableString()
+	if em2 == nil || *em2 != "not coordinator" {
+		t.Errorf("coordinator 1 error_message = %v, want %q", em2, "not coordinator")
+	}
+	_, _ = r.tagBuffer() // struct tag buffer
+
+	// response tag buffer
+	_, err = r.tagBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.remaining()) != 0 {
+		t.Errorf("unexpected remaining bytes: %d", len(r.remaining()))
+	}
+}
+
+func TestRewriteFindCoordinatorResponse_Truncated(t *testing.T) {
+	truncated := []byte{0x00, 0x00, 0x00, 0x01} // just correlation_id
+	_, err := rewriteFindCoordinatorResponse(truncated, 1, "127.0.0.1", 19092)
+	if err == nil {
+		t.Error("expected error from truncated FindCoordinator payload")
+	}
+}
+
+func TestRelayKafkaResponses_FindCoordinatorRewrite(t *testing.T) {
+	tracker := newCorrelationTracker()
+	tracker.track(50, kafkaAPIKeyFindCoordinator, 1, time.Time{}, 0) // FindCoordinator v1
+
+	errMsg := ""
+	payload := buildClassicFindCoordinatorResponse(50, 1, 0, 0, &errMsg, 0, "10.0.0.5", 9092)
+
+	var src bytes.Buffer
+	hdr := make([]byte, 4)
+	binary.BigEndian.PutUint32(hdr, uint32(len(payload)))
+	src.Write(hdr)
+	src.Write(payload)
+
+	var dst bytes.Buffer
+	testRelay(tracker, nil).relay(&src, &dst)
+
+	// Parse the output frame.
+	outBytes := dst.Bytes()
+	if len(outBytes) < 4 {
+		t.Fatal("output too short")
+	}
+	outFrameLen := binary.BigEndian.Uint32(outBytes[:4])
+	outPayload := outBytes[4 : 4+outFrameLen]
+
+	r := newKafkaReader(outPayload)
+	corr, _ := r.int32()
+	if corr != 50 {
+		t.Errorf("correlation_id = %d, want 50", corr)
+	}
+	r.int32() // throttle
+	r.int16() // error_code
+	r.nullableString() // error_message
+	r.int32() // node_id
+	host, _ := r.string()
+	if host != "127.0.0.1" {
+		t.Errorf("host = %q, want 127.0.0.1", host)
+	}
+	port, _ := r.int32()
+	if port != 19092 {
+		t.Errorf("port = %d, want 19092", port)
+	}
+}
+
+func TestRelayKafkaResponses_EmitsKafkaEvents(t *testing.T) {
+	tracker := newCorrelationTracker()
+	tracker.track(1, kafkaAPIKeyMetadata, 5, time.Now(), 50)
+	tracker.track(2, 0, 2, time.Now(), 80) // Produce v2
+
+	// Build two response frames.
+	var src bytes.Buffer
+	writeResponseFrame(&src, 1, []byte("metadata-body"))
+	writeResponseFrame(&src, 2, []byte("produce-body"))
+
+	var dst bytes.Buffer
+	var events []Event
+	emit := func(e Event) {
+		events = append(events, e)
+	}
+	testRelay(tracker, emit).relay(&src, &dst)
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// First event: Metadata.
+	e0 := events[0]
+	if e0.Type != "kafka.request.completed" {
+		t.Errorf("event[0].Type = %q, want kafka.request.completed", e0.Type)
+	}
+	if e0.KafkaRequest == nil {
+		t.Fatal("event[0].KafkaRequest is nil")
+	}
+	if e0.KafkaRequest.APIName != "Metadata" {
+		t.Errorf("event[0].APIName = %q, want Metadata", e0.KafkaRequest.APIName)
+	}
+	if e0.KafkaRequest.APIKey != kafkaAPIKeyMetadata {
+		t.Errorf("event[0].APIKey = %d, want %d", e0.KafkaRequest.APIKey, kafkaAPIKeyMetadata)
+	}
+	if e0.KafkaRequest.APIVersion != 5 {
+		t.Errorf("event[0].APIVersion = %d, want 5", e0.KafkaRequest.APIVersion)
+	}
+	if e0.KafkaRequest.CorrelationID != 1 {
+		t.Errorf("event[0].CorrelationID = %d, want 1", e0.KafkaRequest.CorrelationID)
+	}
+	if e0.KafkaRequest.RequestSize != 50 {
+		t.Errorf("event[0].RequestSize = %d, want 50", e0.KafkaRequest.RequestSize)
+	}
+	if e0.KafkaRequest.ResponseSize <= 0 {
+		t.Errorf("event[0].ResponseSize = %d, want >0", e0.KafkaRequest.ResponseSize)
+	}
+
+	// Second event: Produce.
+	e1 := events[1]
+	if e1.KafkaRequest == nil {
+		t.Fatal("event[1].KafkaRequest is nil")
+	}
+	if e1.KafkaRequest.APIName != "Produce" {
+		t.Errorf("event[1].APIName = %q, want Produce", e1.KafkaRequest.APIName)
+	}
+	if e1.KafkaRequest.CorrelationID != 2 {
+		t.Errorf("event[1].CorrelationID = %d, want 2", e1.KafkaRequest.CorrelationID)
+	}
+	if e1.KafkaRequest.RequestSize != 80 {
+		t.Errorf("event[1].RequestSize = %d, want 80", e1.KafkaRequest.RequestSize)
 	}
 }
 
@@ -916,6 +1322,17 @@ func TestKafkaProxy_EndToEnd(t *testing.T) {
 }
 
 // --- Test helpers ---
+
+// testRelay creates a kafkaResponseRelay configured for test use with the
+// given tracker, optional emit callback, and standard proxy address.
+func testRelay(tracker *correlationTracker, emit func(Event)) *kafkaResponseRelay {
+	return &kafkaResponseRelay{
+		tracker:   tracker,
+		proxyHost: "127.0.0.1",
+		proxyPort: 19092,
+		emit:      emit,
+	}
+}
 
 func writeRequestFrame(w io.Writer, apiKey, apiVersion int16, correlationID int32, extraBody []byte) {
 	kw := newKafkaWriter()

@@ -25,6 +25,7 @@ import (
 	"github.com/matgreaves/rig/internal/server"
 	"github.com/matgreaves/rig/internal/server/service"
 	"github.com/matgreaves/rig/internal/testdata/services/echo"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -1487,6 +1488,151 @@ func TestFuncLogWriter(t *testing.T) {
 	if !strings.Contains(allData, "second line") {
 		t.Errorf("log output missing 'second line': %s", allData)
 	}
+}
+
+// TestKafka verifies that the Kafka proxy works end-to-end against a real
+// Redpanda broker: produce messages, consume them back through the transparent
+// observe proxy, and verify connection events are captured in the event log.
+func TestKafka(t *testing.T) {
+	t.Parallel()
+	serverURL := sharedServerURL
+
+	env := rig.Up(t, rig.Services{
+		"kafka": rig.Container("redpandadata/redpanda:latest").
+			NoIngress().
+			Ingress("default", rig.IngressDef{
+				Protocol:      rig.Kafka,
+				ContainerPort: 9092,
+			}).
+			Cmd(
+				"redpanda", "start",
+				"--mode", "dev-container",
+				"--kafka-addr", "0.0.0.0:9092",
+			),
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+	ep := env.Endpoint("kafka")
+	t.Logf("kafka endpoint: %s", ep.HostPort)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	topic := "rig-test-" + t.Name()
+
+	// Produce messages.
+	producer, err := kgo.NewClient(
+		kgo.SeedBrokers(ep.HostPort),
+		kgo.DefaultProduceTopic(topic),
+		kgo.AllowAutoTopicCreation(),
+		kgo.RetryBackoffFn(func(int) time.Duration { return 500 * time.Millisecond }),
+	)
+	if err != nil {
+		t.Fatalf("create producer: %v", err)
+	}
+	defer producer.Close()
+
+	const numMessages = 5
+	for i := 0; i < numMessages; i++ {
+		r := producer.ProduceSync(ctx, &kgo.Record{
+			Value: []byte(fmt.Sprintf("message-%d", i)),
+		})
+		if r.FirstErr() != nil {
+			t.Fatalf("produce message %d: %v", i, r.FirstErr())
+		}
+	}
+
+	// Consume messages back using a consumer group — this exercises
+	// FindCoordinator rewriting through the proxy.
+	consumer, err := kgo.NewClient(
+		kgo.SeedBrokers(ep.HostPort),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumerGroup("rig-test-group-"+t.Name()),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	)
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+	defer consumer.Close()
+
+	var received []string
+	deadline := time.After(15 * time.Second)
+	for len(received) < numMessages {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for messages: got %d/%d", len(received), numMessages)
+		default:
+		}
+		fetches := consumer.PollFetches(ctx)
+		if errs := fetches.Errors(); len(errs) > 0 {
+			t.Fatalf("poll: %v", errs)
+		}
+		fetches.EachRecord(func(r *kgo.Record) {
+			received = append(received, string(r.Value))
+		})
+	}
+
+	for i := 0; i < numMessages; i++ {
+		want := fmt.Sprintf("message-%d", i)
+		found := false
+		for _, got := range received {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing message %q in received: %v", want, received)
+		}
+	}
+
+	// Close clients so connections are fully torn down.
+	producer.Close()
+	consumer.Close()
+
+	// Give the proxy a moment to emit connection.closed events.
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify observe proxy captured connection events.
+	logResp, err := http.Get(fmt.Sprintf("%s/environments/%s/log", serverURL, env.ID))
+	if err != nil {
+		t.Fatalf("fetch log: %v", err)
+	}
+	defer logResp.Body.Close()
+
+	var events []struct {
+		Type       string `json:"type"`
+		Connection *struct {
+			Source   string `json:"source"`
+			Target   string `json:"target"`
+			BytesIn  int64  `json:"bytes_in"`
+			BytesOut int64  `json:"bytes_out"`
+		} `json:"connection,omitempty"`
+	}
+	if err := json.NewDecoder(logResp.Body).Decode(&events); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+
+	var opened, closed int
+	for _, e := range events {
+		if e.Connection == nil || e.Connection.Target != "kafka" {
+			continue
+		}
+		switch e.Type {
+		case "connection.opened":
+			opened++
+		case "connection.closed":
+			if e.Connection.BytesIn > 0 && e.Connection.BytesOut > 0 {
+				closed++
+			}
+		}
+	}
+	if opened < 1 {
+		t.Errorf("connection.opened events for kafka: got %d, want >= 1", opened)
+	}
+	if closed < 1 {
+		t.Errorf("connection.closed events (with bytes) for kafka: got %d, want >= 1", closed)
+	}
+	t.Logf("kafka proxy events: %d opened, %d closed", opened, closed)
 }
 
 // --- helpers ---

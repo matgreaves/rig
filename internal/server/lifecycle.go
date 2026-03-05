@@ -633,6 +633,20 @@ func proxyEmitter(sc *serviceContext) func(proxy.Event) {
 			}
 			ev.GRPCCall = info
 		}
+		if pe.KafkaRequest != nil {
+			ev.KafkaRequest = &KafkaRequestInfo{
+				Source:        pe.KafkaRequest.Source,
+				Target:        pe.KafkaRequest.Target,
+				Ingress:       pe.KafkaRequest.Ingress,
+				APIKey:        pe.KafkaRequest.APIKey,
+				APIName:       pe.KafkaRequest.APIName,
+				APIVersion:    pe.KafkaRequest.APIVersion,
+				CorrelationID: pe.KafkaRequest.CorrelationID,
+				LatencyMs:     pe.KafkaRequest.LatencyMs,
+				RequestSize:   pe.KafkaRequest.RequestSize,
+				ResponseSize:  pe.KafkaRequest.ResponseSize,
+			}
+		}
 		sc.log.Publish(ev)
 	}
 }

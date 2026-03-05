@@ -54,10 +54,11 @@ const (
 	EventProgressStall EventType = "progress.stall"
 
 	// Traffic observation.
-	EventRequestCompleted  EventType = "request.completed"
-	EventConnectionOpened  EventType = "connection.opened"
-	EventConnectionClosed  EventType = "connection.closed"
-	EventGRPCCallCompleted EventType = "grpc.call.completed"
+	EventRequestCompleted      EventType = "request.completed"
+	EventConnectionOpened      EventType = "connection.opened"
+	EventConnectionClosed      EventType = "connection.closed"
+	EventGRPCCallCompleted     EventType = "grpc.call.completed"
+	EventKafkaRequestCompleted EventType = "kafka.request.completed"
 )
 
 // LogEntry holds a line of service output.
@@ -137,6 +138,20 @@ type ServiceSnapshot struct {
 	WaitingOn []string `json:"waiting_on,omitempty"`
 }
 
+// KafkaRequestInfo captures an observed Kafka request/response pair.
+type KafkaRequestInfo struct {
+	Source        string  `json:"source"`
+	Target        string  `json:"target"`
+	Ingress       string  `json:"ingress"`
+	APIKey        int16   `json:"api_key"`
+	APIName       string  `json:"api_name"`
+	APIVersion    int16   `json:"api_version"`
+	CorrelationID int32   `json:"correlation_id"`
+	LatencyMs     float64 `json:"latency_ms"`
+	RequestSize   int64   `json:"request_size"`
+	ResponseSize  int64   `json:"response_size"`
+}
+
 // GRPCCallInfo captures an observed gRPC call.
 type GRPCCallInfo struct {
 	Source           string              `json:"source"`
@@ -162,28 +177,29 @@ type GRPCCallInfo struct {
 
 // Event is a single entry in the event log.
 type Event struct {
-	Seq         uint64              `json:"seq"`
-	Type        EventType           `json:"type"`
-	Environment string              `json:"environment,omitempty"`
-	Service     string              `json:"service,omitempty"`
-	Ingress     string              `json:"ingress,omitempty"`
-	Endpoint    *spec.Endpoint      `json:"endpoint,omitempty"`
-	Artifact    string              `json:"artifact,omitempty"`
-	Log         *LogEntry           `json:"log,omitempty"`
-	Callback    *CallbackRequest    `json:"callback,omitempty"`
-	Result      *CallbackResponse   `json:"result,omitempty"`
-	Error       string              `json:"error,omitempty"`
-	Request     *RequestInfo        `json:"request,omitempty"`
-	Connection  *ConnectionInfo     `json:"connection,omitempty"`
-	GRPCCall    *GRPCCallInfo       `json:"grpc_call,omitempty"`
-	Diagnostic  *DiagnosticSnapshot `json:"diagnostic,omitempty"`
-	EnvDir      string              `json:"env_dir,omitempty"`
-	Message     string              `json:"message,omitempty"`
+	Seq          uint64              `json:"seq"`
+	Type         EventType           `json:"type"`
+	Environment  string              `json:"environment,omitempty"`
+	Service      string              `json:"service,omitempty"`
+	Ingress      string              `json:"ingress,omitempty"`
+	Endpoint     *spec.Endpoint      `json:"endpoint,omitempty"`
+	Artifact     string              `json:"artifact,omitempty"`
+	Log          *LogEntry           `json:"log,omitempty"`
+	Callback     *CallbackRequest    `json:"callback,omitempty"`
+	Result       *CallbackResponse   `json:"result,omitempty"`
+	Error        string              `json:"error,omitempty"`
+	Request      *RequestInfo        `json:"request,omitempty"`
+	Connection   *ConnectionInfo     `json:"connection,omitempty"`
+	GRPCCall     *GRPCCallInfo       `json:"grpc_call,omitempty"`
+	KafkaRequest *KafkaRequestInfo   `json:"kafka_request,omitempty"`
+	Diagnostic   *DiagnosticSnapshot `json:"diagnostic,omitempty"`
+	EnvDir       string              `json:"env_dir,omitempty"`
+	Message      string              `json:"message,omitempty"`
 	// Ingresses is populated on environment.up. It maps service name to a
 	// map of ingress name to resolved endpoint, giving clients everything
 	// they need to connect to any service without a follow-up GET request.
-	Ingresses map[string]map[string]spec.ResolvedEndpoint `json:"ingresses,omitempty"`
-	Timestamp time.Time                           `json:"timestamp"`
+	Ingresses    map[string]map[string]spec.ResolvedEndpoint `json:"ingresses,omitempty"`
+	Timestamp    time.Time                                   `json:"timestamp"`
 }
 
 // EventLog is a persistent, ordered event log. Events are stored in two

@@ -14,20 +14,22 @@ import (
 
 // Event types we care about for traffic display.
 const (
-	typeRequestCompleted  = "request.completed"
-	typeConnectionClosed  = "connection.closed"
-	typeGRPCCallCompleted = "grpc.call.completed"
+	typeRequestCompleted       = "request.completed"
+	typeConnectionClosed       = "connection.closed"
+	typeGRPCCallCompleted      = "grpc.call.completed"
+	typeKafkaRequestCompleted  = "kafka.request.completed"
 )
 
 // event is the top-level JSONL event structure. Only traffic-relevant fields
 // are included; lifecycle events are silently skipped.
 type event struct {
-	Seq        uint64          `json:"seq"`
-	Type       string          `json:"type"`
-	Timestamp  time.Time       `json:"timestamp"`
-	Request    *requestInfo    `json:"request,omitempty"`
-	Connection *connectionInfo `json:"connection,omitempty"`
-	GRPCCall   *grpcCallInfo   `json:"grpc_call,omitempty"`
+	Seq          uint64            `json:"seq"`
+	Type         string            `json:"type"`
+	Timestamp    time.Time         `json:"timestamp"`
+	Request      *requestInfo      `json:"request,omitempty"`
+	Connection   *connectionInfo   `json:"connection,omitempty"`
+	GRPCCall     *grpcCallInfo     `json:"grpc_call,omitempty"`
+	KafkaRequest *kafkaRequestInfo `json:"kafka_request,omitempty"`
 }
 
 type requestInfo struct {
@@ -78,6 +80,19 @@ type grpcCallInfo struct {
 	ResponseBodyDecoded   json.RawMessage     `json:"response_body_decoded,omitempty"`
 }
 
+type kafkaRequestInfo struct {
+	Source        string  `json:"source"`
+	Target        string  `json:"target"`
+	Ingress       string  `json:"ingress"`
+	APIKey        int16   `json:"api_key"`
+	APIName       string  `json:"api_name"`
+	APIVersion    int16   `json:"api_version"`
+	CorrelationID int32   `json:"correlation_id"`
+	LatencyMs     float64 `json:"latency_ms"`
+	RequestSize   int64   `json:"request_size"`
+	ResponseSize  int64   `json:"response_size"`
+}
+
 // trafficRow is a normalized row ready for display.
 type trafficRow struct {
 	Index    int
@@ -117,6 +132,7 @@ func runTraffic(args []string) error {
 		grpc     bool
 		http     bool
 		tcp      bool
+		kafka    bool
 	)
 	fs.IntVar(&detail, "detail", 0, "show full detail for request #N")
 	fs.StringVar(&edge, "edge", "", `filter by edge: "source→target", "source", or "→target"`)
@@ -125,6 +141,7 @@ func runTraffic(args []string) error {
 	fs.BoolVar(&grpc, "grpc", false, "only show gRPC calls")
 	fs.BoolVar(&http, "http", false, "only show HTTP requests")
 	fs.BoolVar(&tcp, "tcp", false, "only show TCP connections")
+	fs.BoolVar(&kafka, "kafka", false, "only show Kafka requests")
 
 	if err := fs.Parse(flagArgs); err != nil {
 		return err
@@ -157,6 +174,8 @@ func runTraffic(args []string) error {
 		filter.protocol = "http"
 	case tcp:
 		filter.protocol = "tcp"
+	case kafka:
+		filter.protocol = "kafka"
 	}
 
 	// Resolve glob pattern if the argument isn't a direct file path.
@@ -215,7 +234,7 @@ func parseTrafficEvents(r io.Reader) ([]event, error) {
 			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
 		switch ev.Type {
-		case typeRequestCompleted, typeConnectionClosed, typeGRPCCallCompleted:
+		case typeRequestCompleted, typeConnectionClosed, typeGRPCCallCompleted, typeKafkaRequestCompleted:
 			events = append(events, ev)
 		}
 	}
@@ -265,6 +284,16 @@ func buildRows(events []event) []trafficRow {
 			row.Status = "—"
 			row.Latency = formatLatency(c.DurationMs)
 			row.Extra = fmt.Sprintf("%s↑ %s↓", formatBytes(c.BytesIn), formatBytes(c.BytesOut))
+		case typeKafkaRequestCompleted:
+			k := ev.KafkaRequest
+			row.Source = k.Source
+			row.Target = k.Target
+			row.Protocol = "Kafka"
+			row.Method = k.APIName
+			row.Path = fmt.Sprintf("v%d cid:%d", k.APIVersion, k.CorrelationID)
+			row.Status = "—"
+			row.Latency = formatLatency(k.LatencyMs)
+			row.Extra = fmt.Sprintf("%s↑ %s↓", formatBytes(k.RequestSize), formatBytes(k.ResponseSize))
 		}
 		rows[i] = row
 	}
@@ -328,6 +357,8 @@ func matchSlow(r trafficRow, thresholdMs float64) bool {
 		latencyMs = r.Event.GRPCCall.LatencyMs
 	case typeConnectionClosed:
 		latencyMs = r.Event.Connection.DurationMs
+	case typeKafkaRequestCompleted:
+		latencyMs = r.Event.KafkaRequest.LatencyMs
 	}
 	return latencyMs >= thresholdMs
 }

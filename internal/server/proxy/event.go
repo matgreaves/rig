@@ -3,10 +3,11 @@ package proxy
 // Event is the proxy-internal event type emitted by forwarders.
 // The lifecycle layer converts these into server.Event entries.
 type Event struct {
-	Type       string
-	Request    *RequestInfo
-	Connection *ConnectionInfo
-	GRPCCall   *GRPCCallInfo
+	Type         string
+	Request      *RequestInfo
+	Connection   *ConnectionInfo
+	GRPCCall     *GRPCCallInfo
+	KafkaRequest *KafkaRequestInfo
 }
 
 // RequestInfo captures an observed HTTP request/response pair.
@@ -37,6 +38,20 @@ type ConnectionInfo struct {
 	BytesIn    int64
 	BytesOut   int64
 	DurationMs float64
+}
+
+// KafkaRequestInfo captures an observed Kafka request/response pair.
+type KafkaRequestInfo struct {
+	Source        string
+	Target        string
+	Ingress       string
+	APIKey        int16
+	APIName       string // "Produce", "Fetch", "Metadata", etc.
+	APIVersion    int16
+	CorrelationID int32
+	LatencyMs     float64
+	RequestSize   int64
+	ResponseSize  int64
 }
 
 // GRPCCallInfo captures an observed gRPC call.
