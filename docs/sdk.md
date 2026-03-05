@@ -199,6 +199,39 @@ Managed SQS-compatible message queue backed by ElasticMQ.
 rig.SQS()
 ```
 
+### Kafka (`"kafka"`)
+
+Runs a Redpanda container with Kafka and schema registry.
+
+- **Default ingresses**: `"default"` (Kafka on port 9092) + `"schema-registry"` (HTTP on port 8081)
+- **Default image**: `redpandadata/redpanda:latest`
+- **No published attributes**: use `ep.HostPort` as bootstrap servers directly
+- **Not pooled**: each test gets a fresh container (avoids topic name collisions)
+
+Access endpoints from tests:
+
+```go
+ep := env.Endpoint("kafka")                        // bootstrap servers = ep.HostPort
+sr := env.Endpoint("kafka", "schema-registry")     // schema registry = http://{sr.HostPort}
+```
+
+Services that depend on Kafka wire both ingresses as separate egresses:
+
+```go
+rig.Go("./cmd/worker").
+    Egress("kafka").                                        // → default ingress
+    EgressAs("schema-registry", "kafka", "schema-registry") // → schema-registry ingress
+```
+
+Schema registration via `AvroSchema`/`ProtoSchema` reads the file at call time and POSTs it to the schema registry during init. The subject name is derived from the filename (sans extension).
+
+```go
+rig.Kafka()
+rig.Kafka().Image("redpandadata/redpanda:v24.1.1")
+rig.Kafka().AvroSchema("schemas/user-value.avsc")   // registers subject "user-value"
+rig.Kafka().ProtoSchema("schemas/order-key.proto")   // registers subject "order-key"
+```
+
 ### Temporal (`"temporal"`)
 
 Downloads and runs a Temporal dev server.
@@ -239,6 +272,7 @@ rig.Custom("redis", map[string]any{"image": "redis:7-alpine"})
 | Redis | (automatic) | TCP | Fixed port 6379, no user override |
 | S3 | (automatic) | TCP | Fixed port 8333, no user override |
 | SQS | (automatic) | TCP | Fixed port 9324, no user override |
+| Kafka | `"default"` + `"schema-registry"` | Kafka + HTTP | Ports 9092 + 8081, not pooled |
 | Temporal | `"default"` + `"ui"` | gRPC + HTTP | |
 | Custom | `"default"` | HTTP | |
 
@@ -248,7 +282,7 @@ rig.Custom("redis", map[string]any{"image": "redis:7-alpine"})
 rig.IngressHTTP()  // IngressDef{Protocol: rig.HTTP}
 rig.IngressTCP()   // IngressDef{Protocol: rig.TCP}
 rig.IngressGRPC()  // IngressDef{Protocol: rig.GRPC}
-rig.IngressKafka() // IngressDef{Protocol: rig.Kafka}
+rig.IngressKafka() // IngressDef{Protocol: connect.Kafka}
 ```
 
 ### Health check override

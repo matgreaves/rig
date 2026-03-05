@@ -92,6 +92,7 @@ func TestMain(m *testing.M) {
 	reg.Register("temporal", service.NewTemporal(temporalPool))
 	reg.Register("s3", service.NewS3(s3Pool))
 	reg.Register("sqs", service.NewSQS(sqsPool))
+	reg.Register("kafka", service.Kafka{})
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 
@@ -1498,17 +1499,7 @@ func TestKafka(t *testing.T) {
 	serverURL := sharedServerURL
 
 	env := rig.Up(t, rig.Services{
-		"kafka": rig.Container("redpandadata/redpanda:latest").
-			NoIngress().
-			Ingress("default", rig.IngressDef{
-				Protocol:      rig.Kafka,
-				ContainerPort: 9092,
-			}).
-			Cmd(
-				"redpanda", "start",
-				"--mode", "dev-container",
-				"--kafka-addr", "0.0.0.0:9092",
-			),
+		"kafka": rig.Kafka(),
 	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
 
 	ep := env.Endpoint("kafka")
@@ -1633,6 +1624,74 @@ func TestKafka(t *testing.T) {
 		t.Errorf("connection.closed events (with bytes) for kafka: got %d, want >= 1", closed)
 	}
 	t.Logf("kafka proxy events: %d opened, %d closed", opened, closed)
+}
+
+// TestKafkaSchemaRegistry verifies that AvroSchema registers schemas with the
+// Redpanda schema registry during init.
+func TestKafkaSchemaRegistry(t *testing.T) {
+	t.Parallel()
+	serverURL := sharedServerURL
+	root := repoRoot(t)
+
+	env := rig.Up(t, rig.Services{
+		"kafka": rig.Kafka().AvroSchema(filepath.Join(root, "internal", "testdata", "schemas", "user-value.avsc")),
+	}, rig.WithServer(serverURL), rig.WithTimeout(120*time.Second))
+
+	srEP := env.Endpoint("kafka", "schema-registry")
+	t.Logf("schema-registry endpoint: %s", srEP.HostPort)
+
+	// Verify the subject was registered.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	subjectsURL := fmt.Sprintf("http://%s/subjects", srEP.HostPort)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subjectsURL, nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", subjectsURL, err)
+	}
+	defer resp.Body.Close()
+
+	var subjects []string
+	if err := json.NewDecoder(resp.Body).Decode(&subjects); err != nil {
+		t.Fatalf("decode subjects: %v", err)
+	}
+
+	found := false
+	for _, s := range subjects {
+		if s == "user-value" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("subject user-value not found in %v", subjects)
+	}
+
+	// Verify the schema content.
+	versionURL := fmt.Sprintf("http://%s/subjects/user-value/versions/1", srEP.HostPort)
+	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET %s: %v", versionURL, err)
+	}
+	defer resp2.Body.Close()
+
+	var version struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&version); err != nil {
+		t.Fatalf("decode version: %v", err)
+	}
+	if !strings.Contains(version.Schema, `"name":"User"`) && !strings.Contains(version.Schema, `"name": "User"`) {
+		t.Errorf("schema does not contain User record: %s", version.Schema)
+	}
 }
 
 // --- helpers ---

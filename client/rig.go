@@ -25,10 +25,9 @@ type (
 )
 
 const (
-	TCP   = connect.TCP
-	HTTP  = connect.HTTP
-	GRPC  = connect.GRPC
-	Kafka = connect.Kafka
+	TCP  = connect.TCP
+	HTTP = connect.HTTP
+	GRPC = connect.GRPC
 )
 
 // Services maps service names to their definitions.
@@ -68,7 +67,7 @@ func IngressTCP() IngressDef { return IngressDef{Protocol: TCP} }
 func IngressGRPC() IngressDef { return IngressDef{Protocol: GRPC} }
 
 // IngressKafka returns an IngressDef for a Kafka endpoint.
-func IngressKafka() IngressDef { return IngressDef{Protocol: Kafka} }
+func IngressKafka() IngressDef { return IngressDef{Protocol: connect.Kafka} }
 
 // ReadyDef overrides the health check for an ingress.
 type ReadyDef struct {
@@ -109,6 +108,14 @@ type execHook struct {
 }
 
 func (execHook) rigHook() {}
+
+type schemaHook struct {
+	subject    string
+	schemaType string // "AVRO", "PROTOBUF"
+	schema     string // file content, read at call time
+}
+
+func (schemaHook) rigHook() {}
 
 // startFunc is a function that runs as a service in the test process.
 type startFunc func(ctx context.Context) error

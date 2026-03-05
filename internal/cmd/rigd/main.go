@@ -53,6 +53,7 @@ func main() {
 	reg.Register("temporal", service.NewTemporal(temporalPool))
 	reg.Register("s3", service.NewS3(s3Pool))
 	reg.Register("sqs", service.NewSQS(sqsPool))
+	reg.Register("kafka", service.Kafka{})
 	reg.Register("proxy", service.NewProxy())
 	reg.Register("test", service.Test{})
 

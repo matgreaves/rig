@@ -72,6 +72,7 @@ var (
 	SQSQueueURL = Attr[string]("SQS_QUEUE_URL")
 )
 
+
 // Cross-cutting attributes.
 var (
 	// Secure indicates the endpoint requires TLS or equivalent.

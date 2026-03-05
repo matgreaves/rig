@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+
+	"github.com/matgreaves/rig/connect"
 )
 
 // hookSeq generates unique hook names across the process.
@@ -55,6 +57,8 @@ func serviceToSpec(def ServiceDef, handlers map[string]hookFunc, startHandlers m
 		return s3ToSpec(d, handlers)
 	case *SQSDef:
 		return sqsToSpec(d, handlers)
+	case *KafkaDef:
+		return kafkaToSpec(d, handlers)
 	default:
 		return specService{}, fmt.Errorf("unknown service type: %T", def)
 	}
@@ -279,6 +283,16 @@ func hookToSpec(h hook, handlers map[string]hookFunc) (*specHookSpec, error) {
 			Type:   "exec",
 			Config: cfg,
 		}, nil
+	case schemaHook:
+		cfg, _ := json.Marshal(map[string]any{
+			"subject":     hk.subject,
+			"schema_type": hk.schemaType,
+			"schema":      hk.schema,
+		})
+		return &specHookSpec{
+			Type:   "schema",
+			Config: cfg,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported hook type: %T", h)
 	}
@@ -356,6 +370,29 @@ func sqsToSpec(d *SQSDef, handlers map[string]hookFunc) (specService, error) {
 		Type: "sqs",
 		Ingresses: map[string]specIngressSpec{
 			"default": {Protocol: TCP, ContainerPort: 9324},
+		},
+		Egresses: egressesToSpec(d.egresses),
+		Hooks:    hooks,
+	}, nil
+}
+
+func kafkaToSpec(d *KafkaDef, handlers map[string]hookFunc) (specService, error) {
+	var cfg json.RawMessage
+	if d.image != "" {
+		cfg, _ = json.Marshal(map[string]string{"image": d.image})
+	}
+
+	hooks, err := hooksToSpec(d.hooks, handlers)
+	if err != nil {
+		return specService{}, err
+	}
+
+	return specService{
+		Type:   "kafka",
+		Config: cfg,
+		Ingresses: map[string]specIngressSpec{
+			"default":         {Protocol: connect.Kafka, ContainerPort: 9092},
+			"schema-registry": {Protocol: HTTP, ContainerPort: 8081},
 		},
 		Egresses: egressesToSpec(d.egresses),
 		Hooks:    hooks,

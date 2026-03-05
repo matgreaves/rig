@@ -162,7 +162,7 @@ The JSON body sent to `POST /environments`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `s3`, `sqs`, `temporal`, `client`, `custom` |
+| `type` | string | Yes | Service implementation: `container`, `go`, `process`, `postgres`, `redis`, `s3`, `sqs`, `kafka`, `temporal`, `client`, `custom` |
 | `config` | object | No | Type-specific configuration as raw JSON |
 | `args` | string[] | No | Command-line arguments. Supports `${VAR}` template expansion. |
 | `ingresses` | object | No | Map of ingress name to IngressSpec. If omitted, the service has no ingresses (valid for workers). SDK builders typically add a default HTTP ingress. |
@@ -208,6 +208,8 @@ Hook types:
 - `"client_func"` — callback to client-side function (works in prestart and init)
 - `"sql"` — Postgres: run SQL statements via `psql` inside the container (config: `{"statements": ["CREATE TABLE ...", "INSERT ..."]}`)
 - `"exec"` — Container/Postgres: run a command inside the container via `docker exec` (config: `{"command": ["cmd", "arg1", "arg2"]}`)
+- `"schema"` — Kafka: register a schema with the schema registry (config: `{"subject": "user-value", "schema_type": "AVRO", "schema": "..."}`)
+
 
 ### Hooks
 
@@ -264,6 +266,14 @@ Each service type reads type-specific fields from `config`:
 - Backed by ElasticMQ (`softwaremill/elasticmq-native:1.6.9`)
 - Pooled: shares a single container across test environments; each environment gets an isolated queue
 - Published attributes: `SQS_ENDPOINT` (`http://${HOST}:${PORT}`), `SQS_QUEUE_URL` (queue URL), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
+
+**`kafka`**: `{"image": "redpandadata/redpanda:latest"}`
+- `image` (optional): Docker image. Default `redpandadata/redpanda:latest`.
+- Default ingresses: `"default"` (Kafka on port 9092) + `"schema-registry"` (HTTP on port 8081)
+- Not pooled: each test gets a fresh container
+- No published attributes — use `ep.HostPort` for bootstrap servers
+- Runs: `redpanda start --mode dev-container --kafka-addr 0.0.0.0:9092 --schema-registry-addr 0.0.0.0:8081`
+- Supported hooks: `"schema"` (config: `{"subject": "...", "schema_type": "AVRO"|"PROTOBUF", "schema": "..."}`)
 
 **`temporal`**: `{"version": "1.5.1"}`
 - `version` (optional): Temporal CLI version. Default `1.5.1`.
