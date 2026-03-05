@@ -204,7 +204,7 @@ rig.SQS()
 Runs a Redpanda container with Kafka and schema registry.
 
 - **Default ingresses**: `"default"` (Kafka on port 9092) + `"schema-registry"` (HTTP on port 8081)
-- **Default image**: `redpandadata/redpanda:latest`
+- **Default image**: `redpandadata/redpanda:v24.3.1`
 - **No published attributes**: use `ep.HostPort` as bootstrap servers directly
 - **Not pooled**: each test gets a fresh container (avoids topic name collisions)
 

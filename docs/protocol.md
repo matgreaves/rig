@@ -267,12 +267,12 @@ Each service type reads type-specific fields from `config`:
 - Pooled: shares a single container across test environments; each environment gets an isolated queue
 - Published attributes: `SQS_ENDPOINT` (`http://${HOST}:${PORT}`), `SQS_QUEUE_URL` (queue URL), `AWS_ACCESS_KEY_ID` (`rig`), `AWS_SECRET_ACCESS_KEY` (`rig`)
 
-**`kafka`**: `{"image": "redpandadata/redpanda:latest"}`
-- `image` (optional): Docker image. Default `redpandadata/redpanda:latest`.
+**`kafka`**: `{"image": "redpandadata/redpanda:v24.3.1"}`
+- `image` (optional): Docker image. Default `redpandadata/redpanda:v24.3.1`.
 - Default ingresses: `"default"` (Kafka on port 9092) + `"schema-registry"` (HTTP on port 8081)
 - Not pooled: each test gets a fresh container
 - No published attributes — use `ep.HostPort` for bootstrap servers
-- Runs: `redpanda start --mode dev-container --kafka-addr 0.0.0.0:9092 --schema-registry-addr 0.0.0.0:8081`
+- Runs: `redpanda start --mode dev-container --smp 1 --memory 256M --overprovisioned --kafka-addr 0.0.0.0:9092 --schema-registry-addr 0.0.0.0:8081`
 - Supported hooks: `"schema"` (config: `{"subject": "...", "schema_type": "AVRO"|"PROTOBUF", "schema": "..."}`)
 
 **`temporal`**: `{"version": "1.5.1"}`
