@@ -59,15 +59,16 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#rigd/v}" >> "$GITHUB_OUTPUT"
 
-      - name: Update client/version.go
+      - name: Update RigdVersion constants
         run: |
           sed -i 's/const RigdVersion = ".*"/const RigdVersion = "${{ steps.version.outputs.version }}"/' client/version.go
+          sed -i 's/const RigdVersion = ".*"/const RigdVersion = "${{ steps.version.outputs.version }}"/' cmd/rig/version.go
 
       - name: Commit to main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add client/version.go
+          git add client/version.go cmd/rig/version.go
           git diff --cached --quiet && exit 0
           git commit -m "Bump RigdVersion to ${{ steps.version.outputs.version }}"
           git push origin main
