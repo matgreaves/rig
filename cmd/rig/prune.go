@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
 func runPrune(args []string) error {
@@ -47,7 +49,7 @@ func runPrune(args []string) error {
 	var totalBytes int64
 
 	if doCache {
-		n, b, err := pruneCache(filepath.Join(defaultRigDir(), "cache"), cutoff, dryRun)
+		n, b, err := pruneCache(filepath.Join(rigdata.DefaultRigDir(), "cache"), cutoff, dryRun)
 		if err != nil {
 			return err
 		}
@@ -56,7 +58,7 @@ func runPrune(args []string) error {
 	}
 
 	if doLogs {
-		n, b, err := pruneLogs(logDir(), cutoff, dryRun)
+		n, b, err := pruneLogs(rigdata.LogDir(), cutoff, dryRun)
 		if err != nil {
 			return err
 		}
@@ -71,10 +73,10 @@ func runPrune(args []string) error {
 
 	if dryRun {
 		fmt.Printf("would prune %d %s (would free ~%s)\n",
-			totalPruned, plural(totalPruned, "entry", "entries"), formatBytes(totalBytes))
+			totalPruned, plural(totalPruned, "entry", "entries"), rigdata.FormatBytes(totalBytes))
 	} else {
 		fmt.Printf("pruned %d %s (freed ~%s)\n",
-			totalPruned, plural(totalPruned, "entry", "entries"), formatBytes(totalBytes))
+			totalPruned, plural(totalPruned, "entry", "entries"), rigdata.FormatBytes(totalBytes))
 	}
 	return nil
 }
@@ -128,7 +130,7 @@ func pruneCache(cacheDir string, cutoff time.Time, dryRun bool) (int, int64, err
 			if dryRun {
 				age := formatAge(info, err)
 				fmt.Printf("would remove cache/%s/%s (last used %s, %s)\n",
-					td.Name(), e.Name(), age, formatBytes(size))
+					td.Name(), e.Name(), age, rigdata.FormatBytes(size))
 			} else {
 				if err := os.RemoveAll(entryDir); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: failed to remove %s/%s: %v\n", td.Name(), e.Name(), err)
@@ -197,7 +199,7 @@ func pruneLogs(dir string, cutoff time.Time, dryRun bool) (int, int64, error) {
 		if dryRun {
 			age := formatAge(info, nil)
 			fmt.Printf("would remove logs/%s (%s, %s)\n",
-				e.Name(), age, formatBytes(size))
+				e.Name(), age, rigdata.FormatBytes(size))
 		} else {
 			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to remove logs/%s: %v\n", e.Name(), err)
@@ -212,7 +214,7 @@ func pruneLogs(dir string, cutoff time.Time, dryRun bool) (int, int64, error) {
 		companionPath := filepath.Join(dir, companion)
 		if ci, err := os.Stat(companionPath); err == nil {
 			if dryRun {
-				fmt.Printf("would remove logs/%s (%s)\n", companion, formatBytes(ci.Size()))
+				fmt.Printf("would remove logs/%s (%s)\n", companion, rigdata.FormatBytes(ci.Size()))
 			} else {
 				os.Remove(companionPath)
 			}

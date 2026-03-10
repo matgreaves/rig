@@ -5,18 +5,20 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
-func loadTestEvents(t *testing.T, path string) []event {
+func loadTestEvents(t *testing.T, path string) []rigdata.Event {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
 	defer f.Close()
-	events, err := parseTrafficEvents(f)
+	events, err := rigdata.ParseTrafficEvents(f)
 	if err != nil {
-		t.Fatalf("parseTrafficEvents(%s): %v", path, err)
+		t.Fatalf("ParseTrafficEvents(%s): %v", path, err)
 	}
 	return events
 }
@@ -27,20 +29,20 @@ func TestParseTrafficEvents(t *testing.T) {
 	if got := len(events); got != 6 {
 		t.Fatalf("got %d events, want 6", got)
 	}
-	if events[0].Type != typeRequestCompleted {
-		t.Errorf("events[0].Type = %q, want %q", events[0].Type, typeRequestCompleted)
+	if events[0].Type != rigdata.TypeRequestCompleted {
+		t.Errorf("events[0].Type = %q, want %q", events[0].Type, rigdata.TypeRequestCompleted)
 	}
-	if events[1].Type != typeGRPCCallCompleted {
-		t.Errorf("events[1].Type = %q, want %q", events[1].Type, typeGRPCCallCompleted)
+	if events[1].Type != rigdata.TypeGRPCCallCompleted {
+		t.Errorf("events[1].Type = %q, want %q", events[1].Type, rigdata.TypeGRPCCallCompleted)
 	}
-	if events[4].Type != typeConnectionClosed {
-		t.Errorf("events[4].Type = %q, want %q", events[4].Type, typeConnectionClosed)
+	if events[4].Type != rigdata.TypeConnectionClosed {
+		t.Errorf("events[4].Type = %q, want %q", events[4].Type, rigdata.TypeConnectionClosed)
 	}
 }
 
 func TestBuildRows(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	if len(rows) != 6 {
 		t.Fatalf("got %d rows, want 6", len(rows))
@@ -85,7 +87,7 @@ func TestBuildRows(t *testing.T) {
 
 func TestRenderTable(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 	var buf bytes.Buffer
 	renderTable(&buf, rows)
 	out := buf.String()
@@ -109,10 +111,10 @@ func TestRenderTable(t *testing.T) {
 
 func TestFilterEdge(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	// Filter by name (matches source or target).
-	filtered := applyFilter(rows, trafficFilter{edge: "temporal"})
+	filtered := rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Edge: "temporal"})
 	for _, r := range filtered {
 		if r.Source != "temporal" && r.Target != "temporal" {
 			t.Errorf("expected temporal in edge, got %s→%s", r.Source, r.Target)
@@ -123,7 +125,7 @@ func TestFilterEdge(t *testing.T) {
 	}
 
 	// Filter source→target with arrow.
-	filtered = applyFilter(rows, trafficFilter{edge: "order→postgres"})
+	filtered = rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Edge: "order→postgres"})
 	for _, r := range filtered {
 		if r.Source != "order" || r.Target != "postgres" {
 			t.Errorf("expected order→postgres, got %s→%s", r.Source, r.Target)
@@ -131,7 +133,7 @@ func TestFilterEdge(t *testing.T) {
 	}
 
 	// Filter with -> syntax.
-	filtered2 := applyFilter(rows, trafficFilter{edge: "order->postgres"})
+	filtered2 := rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Edge: "order->postgres"})
 	if len(filtered2) != len(filtered) {
 		t.Errorf("-> filter got %d, → filter got %d", len(filtered2), len(filtered))
 	}
@@ -139,20 +141,20 @@ func TestFilterEdge(t *testing.T) {
 
 func TestFilterSlow(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
-	filtered := applyFilter(rows, trafficFilter{slowMs: 5})
+	filtered := rigdata.ApplyFilter(rows, rigdata.TrafficFilter{SlowMs: 5})
 	for _, r := range filtered {
 		switch r.Event.Type {
-		case typeRequestCompleted:
+		case rigdata.TypeRequestCompleted:
 			if r.Event.Request.LatencyMs < 5 {
 				t.Errorf("got latency %.1fms, want >= 5ms", r.Event.Request.LatencyMs)
 			}
-		case typeGRPCCallCompleted:
+		case rigdata.TypeGRPCCallCompleted:
 			if r.Event.GRPCCall.LatencyMs < 5 {
 				t.Errorf("got latency %.1fms, want >= 5ms", r.Event.GRPCCall.LatencyMs)
 			}
-		case typeConnectionClosed:
+		case rigdata.TypeConnectionClosed:
 			if r.Event.Connection.DurationMs < 5 {
 				t.Errorf("got duration %.1fms, want >= 5ms", r.Event.Connection.DurationMs)
 			}
@@ -166,18 +168,18 @@ func TestFilterSlow(t *testing.T) {
 
 func TestFilterStatus(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	// Exact status.
-	filtered := applyFilter(rows, trafficFilter{status: "500"})
+	filtered := rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Status: "500"})
 	if len(filtered) != 1 {
 		t.Errorf("got %d rows for status=500, want 1", len(filtered))
 	}
 
 	// Class match.
-	filtered = applyFilter(rows, trafficFilter{status: "2xx"})
+	filtered = rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Status: "2xx"})
 	for _, r := range filtered {
-		if r.Event.Type == typeRequestCompleted && r.Event.Request.StatusCode/100 != 2 {
+		if r.Event.Type == rigdata.TypeRequestCompleted && r.Event.Request.StatusCode/100 != 2 {
 			t.Errorf("got status %d, want 2xx", r.Event.Request.StatusCode)
 		}
 	}
@@ -188,9 +190,9 @@ func TestFilterStatus(t *testing.T) {
 
 func TestFilterProtocol(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
-	filtered := applyFilter(rows, trafficFilter{protocol: "grpc"})
+	filtered := rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Protocol: "grpc"})
 	if len(filtered) != 1 {
 		t.Errorf("got %d rows for protocol=grpc, want 1", len(filtered))
 	}
@@ -198,12 +200,12 @@ func TestFilterProtocol(t *testing.T) {
 		t.Errorf("got protocol %q, want gRPC", filtered[0].Protocol)
 	}
 
-	filtered = applyFilter(rows, trafficFilter{protocol: "tcp"})
+	filtered = rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Protocol: "tcp"})
 	if len(filtered) != 1 {
 		t.Errorf("got %d rows for protocol=tcp, want 1", len(filtered))
 	}
 
-	filtered = applyFilter(rows, trafficFilter{protocol: "http"})
+	filtered = rigdata.ApplyFilter(rows, rigdata.TrafficFilter{Protocol: "http"})
 	if len(filtered) != 4 {
 		t.Errorf("got %d rows for protocol=http, want 4", len(filtered))
 	}
@@ -211,7 +213,7 @@ func TestFilterProtocol(t *testing.T) {
 
 func TestRenderDetailHTTP(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	var buf bytes.Buffer
 	if err := renderDetail(&buf, rows, 1); err != nil {
@@ -242,7 +244,7 @@ func TestRenderDetailHTTP(t *testing.T) {
 
 func TestRenderDetailGRPC(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	var buf bytes.Buffer
 	if err := renderDetail(&buf, rows, 2); err != nil {
@@ -267,7 +269,7 @@ func TestRenderDetailGRPC(t *testing.T) {
 
 func TestRenderDetailTCP(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	var buf bytes.Buffer
 	if err := renderDetail(&buf, rows, 5); err != nil {
@@ -288,7 +290,7 @@ func TestRenderDetailTCP(t *testing.T) {
 
 func TestRenderDetailNotFound(t *testing.T) {
 	events := loadTestEvents(t, "testdata/mixed_traffic.jsonl")
-	rows := buildRows(events)
+	rows := rigdata.BuildRows(events)
 
 	var buf bytes.Buffer
 	err := renderDetail(&buf, rows, 99)
@@ -311,9 +313,9 @@ func TestFormatLatency(t *testing.T) {
 		{1500, "1.50s"},
 	}
 	for _, tt := range tests {
-		got := formatLatency(tt.ms)
+		got := rigdata.FormatLatency(tt.ms)
 		if got != tt.want {
-			t.Errorf("formatLatency(%v) = %q, want %q", tt.ms, got, tt.want)
+			t.Errorf("FormatLatency(%v) = %q, want %q", tt.ms, got, tt.want)
 		}
 	}
 }
@@ -330,15 +332,15 @@ func TestFormatBytes(t *testing.T) {
 		{1048576, "1.0MB"},
 	}
 	for _, tt := range tests {
-		got := formatBytes(tt.b)
+		got := rigdata.FormatBytes(tt.b)
 		if got != tt.want {
-			t.Errorf("formatBytes(%d) = %q, want %q", tt.b, got, tt.want)
+			t.Errorf("FormatBytes(%d) = %q, want %q", tt.b, got, tt.want)
 		}
 	}
 }
 
 func TestEmptyInput(t *testing.T) {
-	events, err := parseTrafficEvents(strings.NewReader(""))
+	events, err := rigdata.ParseTrafficEvents(strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -353,7 +355,7 @@ func TestParseInvalidJSON(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer f.Close()
-	_, err = parseTrafficEvents(f)
+	_, err = rigdata.ParseTrafficEvents(f)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}

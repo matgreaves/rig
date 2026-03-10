@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
 func runSummary(args []string) error {
@@ -38,7 +40,7 @@ func runSummary(args []string) error {
 		}
 	}
 
-	return runSummaryReport(nil, logDir(), pattern, flags)
+	return runSummaryReport(nil, rigdata.LogDir(), pattern, flags)
 }
 
 func printSummaryUsage() {

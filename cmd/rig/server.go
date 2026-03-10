@@ -1,33 +1,10 @@
 package main
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-)
+import "github.com/matgreaves/rig/cmd/rig/rigdata"
 
-// serverAddr reads the rigd server address from the addr file.
-// Returns an error if rigd is not running.
+// serverAddr returns the rigd server address, using the version from this CLI.
+// Kept as a convenience wrapper used by commands that haven't been migrated
+// to call rigdata.ServerAddr directly.
 func serverAddr() (string, error) {
-	rigDir := defaultRigDir()
-
-	// Try versioned addr file first, fall back to unversioned (RIG_BINARY / legacy).
-	candidates := []string{
-		filepath.Join(rigDir, "rigd-v"+RigdVersion+".addr"),
-		filepath.Join(rigDir, "rigd.addr"),
-	}
-
-	for _, addrFile := range candidates {
-		data, err := os.ReadFile(addrFile)
-		if err != nil {
-			continue
-		}
-		addr := strings.TrimSpace(string(data))
-		if addr == "" {
-			continue
-		}
-		return "http://" + addr, nil
-	}
-	return "", fmt.Errorf("rigd is not running (no addr file in %s)", rigDir)
+	return rigdata.ServerAddr(RigdVersion)
 }

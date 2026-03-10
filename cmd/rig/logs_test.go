@@ -5,18 +5,20 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
-func loadTestLogEvents(t *testing.T, path string) []logEvent {
+func loadTestLogEvents(t *testing.T, path string) []rigdata.LogEvent {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
 	defer f.Close()
-	events, err := parseLogEvents(f)
+	events, err := rigdata.ParseLogEvents(f)
 	if err != nil {
-		t.Fatalf("parseLogEvents(%s): %v", path, err)
+		t.Fatalf("ParseLogEvents(%s): %v", path, err)
 	}
 	return events
 }
@@ -27,8 +29,8 @@ func TestParseLogEvents(t *testing.T) {
 	if got := len(events); got != 11 {
 		t.Fatalf("got %d events, want 11", got)
 	}
-	if events[0].Type != typeServiceLog {
-		t.Errorf("events[0].Type = %q, want %q", events[0].Type, typeServiceLog)
+	if events[0].Type != rigdata.TypeServiceLog {
+		t.Errorf("events[0].Type = %q, want %q", events[0].Type, rigdata.TypeServiceLog)
 	}
 	if events[0].Service != "order" {
 		t.Errorf("events[0].Service = %q, want order", events[0].Service)
@@ -41,9 +43,9 @@ func TestParseLogEvents(t *testing.T) {
 func TestParseTestNotes(t *testing.T) {
 	events := loadTestLogEvents(t, "testdata/service_logs.jsonl")
 
-	var notes []logEvent
+	var notes []rigdata.LogEvent
 	for _, ev := range events {
-		if ev.Type == typeTestNote {
+		if ev.Type == rigdata.TypeTestNote {
 			notes = append(notes, ev)
 		}
 	}
@@ -76,11 +78,11 @@ func TestRenderLogs(t *testing.T) {
 	}
 
 	t0 := events[0].Timestamp
-	var rows []logRow
+	var rows []rigdata.LogRow
 	for _, ev := range events {
-		var row logRow
-		row.Time = formatDuration(ev.Timestamp.Sub(t0))
-		if ev.Type == typeTestNote {
+		var row rigdata.LogRow
+		row.Time = rigdata.FormatDuration(ev.Timestamp.Sub(t0))
+		if ev.Type == rigdata.TypeTestNote {
 			row.Service = "TEST"
 			row.Stream = "note"
 			row.Data = ev.Error
@@ -120,13 +122,13 @@ func TestRenderNotesWithMarker(t *testing.T) {
 	events := loadTestLogEvents(t, "testdata/service_logs.jsonl")
 
 	t0 := events[0].Timestamp
-	var rows []logRow
+	var rows []rigdata.LogRow
 	for _, ev := range events {
-		if ev.Type != typeTestNote {
+		if ev.Type != rigdata.TypeTestNote {
 			continue
 		}
-		rows = append(rows, logRow{
-			Time:    formatDuration(ev.Timestamp.Sub(t0)),
+		rows = append(rows, rigdata.LogRow{
+			Time:    rigdata.FormatDuration(ev.Timestamp.Sub(t0)),
 			Service: "TEST",
 			Stream:  "note",
 			Data:    ev.Error,
@@ -150,7 +152,7 @@ func TestFilterByService(t *testing.T) {
 
 	var count int
 	for _, ev := range events {
-		if ev.Type == typeServiceLog && strings.EqualFold(ev.Service, "order") {
+		if ev.Type == rigdata.TypeServiceLog && strings.EqualFold(ev.Service, "order") {
 			count++
 		}
 	}
@@ -164,7 +166,7 @@ func TestFilterByStderr(t *testing.T) {
 
 	var count int
 	for _, ev := range events {
-		if ev.Type == typeServiceLog && ev.Log.Stream == "stderr" {
+		if ev.Type == rigdata.TypeServiceLog && ev.Log.Stream == "stderr" {
 			count++
 		}
 	}
@@ -180,7 +182,7 @@ func TestFilterByGrep(t *testing.T) {
 	var count int
 	for _, ev := range events {
 		data := ""
-		if ev.Type == typeTestNote {
+		if ev.Type == rigdata.TypeTestNote {
 			data = ev.Error
 		} else if ev.Log != nil {
 			data = ev.Log.Data
@@ -197,7 +199,7 @@ func TestFilterByGrep(t *testing.T) {
 }
 
 func TestEmptyLogInput(t *testing.T) {
-	events, err := parseLogEvents(strings.NewReader(""))
+	events, err := rigdata.ParseLogEvents(strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

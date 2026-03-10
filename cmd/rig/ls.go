@@ -1,32 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"strings"
-	"time"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
-
-// lsHeader mirrors the log.header struct written by the server.
-type lsHeader struct {
-	Type        string   `json:"type"`
-	Environment string   `json:"environment"`
-	Outcome     string   `json:"outcome"`
-	Services    []string `json:"services"`
-	DurationMs  float64  `json:"duration_ms"`
-	Timestamp   time.Time `json:"timestamp"`
-}
-
-// lsEntry is a parsed log file summary ready for display.
-type lsEntry struct {
-	Path   string
-	Header lsHeader
-}
 
 // errNoResults is returned when ls finds no matching files.
 // main uses this to exit non-zero without printing an extra error.
@@ -54,7 +37,7 @@ func runLs(args []string) error {
 		pattern = fs.Arg(0)
 	}
 
-	paths, err := scanLogDir(pattern)
+	paths, err := rigdata.ScanLogDir(pattern)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintln(os.Stderr, "No log files found.")
@@ -63,9 +46,9 @@ func runLs(args []string) error {
 		return fmt.Errorf("read log directory: %w", err)
 	}
 
-	var entries []lsEntry
+	var entries []rigdata.LsEntry
 	for _, path := range paths {
-		hdr, err := readHeader(path)
+		hdr, err := rigdata.ReadHeader(path)
 		if err != nil {
 			continue // skip files without a valid log.header
 		}
@@ -78,7 +61,7 @@ func runLs(args []string) error {
 			continue
 		}
 
-		entries = append(entries, lsEntry{Path: path, Header: hdr})
+		entries = append(entries, rigdata.LsEntry{Path: path, Header: hdr})
 	}
 
 	if len(entries) == 0 {
@@ -106,31 +89,7 @@ func runLs(args []string) error {
 	return nil
 }
 
-// readHeader reads only the first line of a JSONL file and parses it as a
-// log.header event. Returns an error if the first line is not a log.header.
-func readHeader(path string) (lsHeader, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return lsHeader{}, err
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	if !scanner.Scan() {
-		return lsHeader{}, fmt.Errorf("empty file")
-	}
-
-	var hdr lsHeader
-	if err := json.Unmarshal(scanner.Bytes(), &hdr); err != nil {
-		return lsHeader{}, err
-	}
-	if hdr.Type != "log.header" {
-		return lsHeader{}, fmt.Errorf("not a log.header")
-	}
-	return hdr, nil
-}
-
-func renderLsTable(w io.Writer, entries []lsEntry) {
+func renderLsTable(w io.Writer, entries []rigdata.LsEntry) {
 	// Column headers and widths.
 	headers := []string{"TIME", "OUTCOME", "NAME", "DURATION", "SERVICES"}
 	widths := make([]int, len(headers))
@@ -148,7 +107,7 @@ func renderLsTable(w io.Writer, entries []lsEntry) {
 		if outcome == "" {
 			outcome = "unknown"
 		}
-		durStr := formatLsDuration(e.Header.DurationMs)
+		durStr := rigdata.FormatLsDuration(e.Header.DurationMs)
 		svcs := strings.Join(e.Header.Services, ", ")
 
 		rows[i] = row{cols: [5]string{
@@ -203,11 +162,4 @@ func colorOutcome(s string) string {
 		return ansiRed + s + ansiReset
 	}
 	return s
-}
-
-func formatLsDuration(ms float64) string {
-	if ms < 1000 {
-		return fmt.Sprintf("%.0fms", ms)
-	}
-	return fmt.Sprintf("%.2fs", ms/1000)
 }

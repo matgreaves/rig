@@ -7,9 +7,11 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
-func renderDetail(w io.Writer, rows []trafficRow, index int) error {
+func renderDetail(w io.Writer, rows []rigdata.TrafficRow, index int) error {
 	// Build service color map from all rows for consistency with table view.
 	serviceIndex := map[string]int{}
 	for _, r := range rows {
@@ -21,7 +23,7 @@ func renderDetail(w io.Writer, rows []trafficRow, index int) error {
 	}
 	serviceColorTotal = len(serviceIndex)
 
-	var target *trafficRow
+	var target *rigdata.TrafficRow
 	for i := range rows {
 		if rows[i].Index == index {
 			target = &rows[i]
@@ -39,25 +41,25 @@ func renderDetail(w io.Writer, rows []trafficRow, index int) error {
 	fmt.Fprintf(w, "  %s  %s → %s  %s  %s  %s  %s\n", dim(r.Time), src, tgt, colorMethod(r.Protocol), r.Path, colorStatus(r.Status), dim(r.Latency))
 
 	switch r.Event.Type {
-	case typeRequestCompleted:
+	case rigdata.TypeRequestCompleted:
 		renderHTTPDetail(w, r.Event.Request)
-	case typeGRPCCallCompleted:
+	case rigdata.TypeGRPCCallCompleted:
 		renderGRPCDetail(w, r.Event.GRPCCall)
-	case typeConnectionClosed:
+	case rigdata.TypeConnectionClosed:
 		renderTCPDetail(w, r.Event.Connection)
-	case typeKafkaRequestCompleted:
+	case rigdata.TypeKafkaRequestCompleted:
 		renderKafkaDetail(w, r.Event.KafkaRequest)
 	}
 	return nil
 }
 
-func renderHTTPDetail(w io.Writer, r *requestInfo) {
+func renderHTTPDetail(w io.Writer, r *rigdata.RequestInfo) {
 	if len(r.RequestHeaders) > 0 {
 		fmt.Fprintf(w, "\n  %s\n", bold("Request Headers:"))
 		writeHeaders(w, r.RequestHeaders)
 	}
 	if len(r.RequestBody) > 0 {
-		label := fmt.Sprintf("Request Body (%s)", formatBytes(int64(len(r.RequestBody))))
+		label := fmt.Sprintf("Request Body (%s)", rigdata.FormatBytes(int64(len(r.RequestBody))))
 		if r.RequestBodyTruncated {
 			label += " [truncated]"
 		}
@@ -69,7 +71,7 @@ func renderHTTPDetail(w io.Writer, r *requestInfo) {
 		writeHeaders(w, r.ResponseHeaders)
 	}
 	if len(r.ResponseBody) > 0 {
-		label := fmt.Sprintf("Response Body (%s)", formatBytes(int64(len(r.ResponseBody))))
+		label := fmt.Sprintf("Response Body (%s)", rigdata.FormatBytes(int64(len(r.ResponseBody))))
 		if r.ResponseBodyTruncated {
 			label += " [truncated]"
 		}
@@ -78,7 +80,7 @@ func renderHTTPDetail(w io.Writer, r *requestInfo) {
 	}
 }
 
-func renderGRPCDetail(w io.Writer, g *grpcCallInfo) {
+func renderGRPCDetail(w io.Writer, g *rigdata.GRPCCallInfo) {
 	if g.GRPCMessage != "" {
 		fmt.Fprintf(w, "\n  %s %s\n", bold("gRPC Message:"), g.GRPCMessage)
 	}
@@ -91,7 +93,7 @@ func renderGRPCDetail(w io.Writer, g *grpcCallInfo) {
 		fmt.Fprintf(w, "\n  %s\n", bold("Request Body (decoded):"))
 		writeBody(w, g.RequestBodyDecoded, "application/json")
 	} else if len(g.RequestBody) > 0 {
-		label := fmt.Sprintf("Request Body (%s)", formatBytes(int64(len(g.RequestBody))))
+		label := fmt.Sprintf("Request Body (%s)", rigdata.FormatBytes(int64(len(g.RequestBody))))
 		if g.RequestBodyTruncated {
 			label += " [truncated]"
 		}
@@ -106,7 +108,7 @@ func renderGRPCDetail(w io.Writer, g *grpcCallInfo) {
 		fmt.Fprintf(w, "\n  %s\n", bold("Response Body (decoded):"))
 		writeBody(w, g.ResponseBodyDecoded, "application/json")
 	} else if len(g.ResponseBody) > 0 {
-		label := fmt.Sprintf("Response Body (%s)", formatBytes(int64(len(g.ResponseBody))))
+		label := fmt.Sprintf("Response Body (%s)", rigdata.FormatBytes(int64(len(g.ResponseBody))))
 		if g.ResponseBodyTruncated {
 			label += " [truncated]"
 		}
@@ -115,19 +117,19 @@ func renderGRPCDetail(w io.Writer, g *grpcCallInfo) {
 	}
 }
 
-func renderKafkaDetail(w io.Writer, k *kafkaRequestInfo) {
+func renderKafkaDetail(w io.Writer, k *rigdata.KafkaRequestInfo) {
 	fmt.Fprintf(w, "\n  %s        %s (key %d)\n", bold("API Name:"), k.APIName, k.APIKey)
 	fmt.Fprintf(w, "  %s     %d\n", bold("API Version:"), k.APIVersion)
 	fmt.Fprintf(w, "  %s  %d\n", bold("Correlation ID:"), k.CorrelationID)
-	fmt.Fprintf(w, "  %s    %s\n", bold("Request Size:"), formatBytes(k.RequestSize))
-	fmt.Fprintf(w, "  %s   %s\n", bold("Response Size:"), formatBytes(k.ResponseSize))
-	fmt.Fprintf(w, "  %s         %s\n", bold("Latency:"), formatLatency(k.LatencyMs))
+	fmt.Fprintf(w, "  %s    %s\n", bold("Request Size:"), rigdata.FormatBytes(k.RequestSize))
+	fmt.Fprintf(w, "  %s   %s\n", bold("Response Size:"), rigdata.FormatBytes(k.ResponseSize))
+	fmt.Fprintf(w, "  %s         %s\n", bold("Latency:"), rigdata.FormatLatency(k.LatencyMs))
 }
 
-func renderTCPDetail(w io.Writer, c *connectionInfo) {
-	fmt.Fprintf(w, "\n  %s   %s\n", bold("Bytes In:"), formatBytes(c.BytesIn))
-	fmt.Fprintf(w, "  %s  %s\n", bold("Bytes Out:"), formatBytes(c.BytesOut))
-	fmt.Fprintf(w, "  %s   %s\n", bold("Duration:"), formatLatency(c.DurationMs))
+func renderTCPDetail(w io.Writer, c *rigdata.ConnectionInfo) {
+	fmt.Fprintf(w, "\n  %s   %s\n", bold("Bytes In:"), rigdata.FormatBytes(c.BytesIn))
+	fmt.Fprintf(w, "  %s  %s\n", bold("Bytes Out:"), rigdata.FormatBytes(c.BytesOut))
+	fmt.Fprintf(w, "  %s   %s\n", bold("Duration:"), rigdata.FormatLatency(c.DurationMs))
 }
 
 func writeHeaders(w io.Writer, headers map[string][]string) {

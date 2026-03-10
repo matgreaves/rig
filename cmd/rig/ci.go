@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 	"github.com/matgreaves/rig/internal/explain"
 )
 
@@ -278,7 +279,7 @@ func ensureArtifacts(runID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(defaultRigDir(), "ci", owner, strconv.FormatInt(runID, 10))
+	dir := filepath.Join(rigdata.DefaultRigDir(), "ci", owner, strconv.FormatInt(runID, 10))
 
 	// Check cache.
 	if _, err := os.Stat(filepath.Join(dir, "logs")); err == nil {
@@ -405,7 +406,7 @@ func runCiSummary(runID int64, ciLogDir string, flags ciFlags) error {
 // is nil (local mode), the header is omitted. Pattern filters log files
 // by name (passed through to scanDir).
 func runSummaryReport(info *ciRunInfo, dir string, pattern string, flags ciFlags) error {
-	paths, err := scanDir(dir, pattern)
+	paths, err := rigdata.ScanDir(dir, pattern)
 	if err != nil {
 		return fmt.Errorf("read log directory: %w", err)
 	}
@@ -563,7 +564,7 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 		if outcome == "" {
 			outcome = "unknown"
 		}
-		durStr := formatLsDuration(t.DurationMs)
+		durStr := rigdata.FormatLsDuration(t.DurationMs)
 		rows[i] = row{
 			cols:   [3]string{outcome, t.Test, durStr},
 			phases: formatPhases(t.Phases, t.DurationMs),
@@ -653,7 +654,7 @@ func renderCiPretty(w io.Writer, info *ciRunInfo, summary ciSummaryCount, tests 
 			if a.Cached {
 				fmt.Fprintf(w, "  %-40s  %s\n", a.Key, dim("cached"))
 			} else if a.DurationMs > 0 {
-				fmt.Fprintf(w, "  %-40s  %s\n", a.Key, formatLsDuration(a.DurationMs))
+				fmt.Fprintf(w, "  %-40s  %s\n", a.Key, rigdata.FormatLsDuration(a.DurationMs))
 			} else {
 				fmt.Fprintf(w, "  %s\n", a.Key)
 			}
@@ -680,16 +681,16 @@ func formatPhases(p *explain.PhaseTimings, totalMs float64) string {
 	threshold := totalMs * 0.01
 	var parts []string
 	if p.ArtifactsMs >= threshold {
-		parts = append(parts, "artifacts "+formatLsDuration(p.ArtifactsMs))
+		parts = append(parts, "artifacts "+rigdata.FormatLsDuration(p.ArtifactsMs))
 	}
 	if p.StartupMs >= threshold {
-		parts = append(parts, "startup "+formatLsDuration(p.StartupMs))
+		parts = append(parts, "startup "+rigdata.FormatLsDuration(p.StartupMs))
 	}
 	if p.TestMs >= threshold {
-		parts = append(parts, "test "+formatLsDuration(p.TestMs))
+		parts = append(parts, "test "+rigdata.FormatLsDuration(p.TestMs))
 	}
 	if p.TeardownMs >= threshold {
-		parts = append(parts, "teardown "+formatLsDuration(p.TeardownMs))
+		parts = append(parts, "teardown "+rigdata.FormatLsDuration(p.TeardownMs))
 	}
 	return strings.Join(parts, " · ")
 }

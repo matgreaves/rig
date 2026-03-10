@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 	"github.com/matgreaves/rig/internal/explain"
 )
 
@@ -26,7 +27,7 @@ func runExplain(args []string) error {
 		}
 	}
 
-	resolved, err := resolveLogFile(filename)
+	resolved, err := rigdata.ResolveLogFile(filename)
 	if err != nil {
 		return err
 	}
