@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/matgreaves/rig/internal/spec"
 )
@@ -42,6 +43,15 @@ func ValidateEnvironment(env *spec.Environment) []string {
 
 	if len(env.Services) == 0 {
 		errs = append(errs, "environment must have at least one service")
+	}
+
+	if env.TTL != "" {
+		d, err := time.ParseDuration(env.TTL)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("invalid ttl %q: %v", env.TTL, err))
+		} else if d <= 0 {
+			errs = append(errs, fmt.Sprintf("ttl must be positive, got %q", env.TTL))
+		}
 	}
 
 	// Sort service names for deterministic error ordering.

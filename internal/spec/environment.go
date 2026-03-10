@@ -24,6 +24,13 @@ type Environment struct {
 	// Used as the default working directory for process/go child services
 	// when no per-service Dir is specified.
 	Dir string `json:"dir,omitempty"`
+
+	// TTL is the maximum lifetime of the environment as a Go duration string
+	// (e.g. "30m", "2h"). When set, the server tears down the environment
+	// after this duration regardless of client state. The client SDK skips
+	// sending DELETE on cleanup, allowing the environment to outlive the test
+	// process for manual inspection.
+	TTL string `json:"ttl,omitempty"`
 }
 
 // ResolvedEnvironment is the runtime view of an environment after all
