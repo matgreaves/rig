@@ -1,44 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
-
-const (
-	typeServiceLog = "service.log"
-	typeTestNote   = "test.note"
-)
-
-type logEntry struct {
-	Stream string `json:"stream"` // "stdout" or "stderr"
-	Data   string `json:"data"`
-}
-
-// logEvent is the subset of a JSONL event we need for log display.
-type logEvent struct {
-	Seq       uint64    `json:"seq"`
-	Type      string    `json:"type"`
-	Service   string    `json:"service"`
-	Log       *logEntry `json:"log,omitempty"`
-	Error     string    `json:"error,omitempty"` // test.note assertion message
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// logRow is a parsed log line ready for display.
-type logRow struct {
-	Time    string
-	Service string
-	Stream  string // "stdout", "stderr", or "note"
-	Data    string
-}
 
 func runLogs(args []string) error {
 	filename, flagArgs := extractFile(args)
@@ -76,7 +47,7 @@ func runLogs(args []string) error {
 	}
 
 	// Resolve glob pattern if the argument isn't a direct file path.
-	resolved, err := resolveLogFile(filename)
+	resolved, err := rigdata.ResolveLogFile(filename)
 	if err != nil {
 		return err
 	}
@@ -88,7 +59,7 @@ func runLogs(args []string) error {
 	}
 	defer f.Close()
 
-	events, err := parseLogEvents(f)
+	events, err := rigdata.ParseLogEvents(f)
 	if err != nil {
 		return err
 	}
@@ -118,12 +89,12 @@ func runLogs(args []string) error {
 	}
 
 	t0 := events[0].Timestamp
-	rows := make([]logRow, 0, len(events))
+	rows := make([]rigdata.LogRow, 0, len(events))
 	for _, ev := range events {
-		var row logRow
-		row.Time = formatDuration(ev.Timestamp.Sub(t0))
+		var row rigdata.LogRow
+		row.Time = rigdata.FormatDuration(ev.Timestamp.Sub(t0))
 
-		if ev.Type == typeTestNote {
+		if ev.Type == rigdata.TypeTestNote {
 			row.Service = "TEST"
 			row.Stream = "note"
 			row.Data = ev.Error
@@ -158,32 +129,7 @@ func runLogs(args []string) error {
 	return nil
 }
 
-func parseLogEvents(r io.Reader) ([]logEvent, error) {
-	var events []logEvent
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var ev logEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNo, err)
-		}
-		switch {
-		case ev.Type == typeServiceLog && ev.Log != nil:
-			events = append(events, ev)
-		case ev.Type == typeTestNote && ev.Error != "":
-			events = append(events, ev)
-		}
-	}
-	return events, scanner.Err()
-}
-
-func renderLogs(w io.Writer, rows []logRow, serviceIndex map[string]int, maxName int) {
+func renderLogs(w io.Writer, rows []rigdata.LogRow, serviceIndex map[string]int, maxName int) {
 	for _, r := range rows {
 		name := fmt.Sprintf("%-*s", maxName, r.Service)
 		ts := dim(r.Time)

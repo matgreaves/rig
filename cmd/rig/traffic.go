@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -10,112 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
-
-// Event types we care about for traffic display.
-const (
-	typeRequestCompleted       = "request.completed"
-	typeConnectionClosed       = "connection.closed"
-	typeGRPCCallCompleted      = "grpc.call.completed"
-	typeKafkaRequestCompleted  = "kafka.request.completed"
-)
-
-// event is the top-level JSONL event structure. Only traffic-relevant fields
-// are included; lifecycle events are silently skipped.
-type event struct {
-	Seq          uint64            `json:"seq"`
-	Type         string            `json:"type"`
-	Timestamp    time.Time         `json:"timestamp"`
-	Request      *requestInfo      `json:"request,omitempty"`
-	Connection   *connectionInfo   `json:"connection,omitempty"`
-	GRPCCall     *grpcCallInfo     `json:"grpc_call,omitempty"`
-	KafkaRequest *kafkaRequestInfo `json:"kafka_request,omitempty"`
-}
-
-type requestInfo struct {
-	Source                string              `json:"source"`
-	Target                string              `json:"target"`
-	Ingress               string              `json:"ingress"`
-	Method                string              `json:"method"`
-	Path                  string              `json:"path"`
-	StatusCode            int                 `json:"status_code"`
-	LatencyMs             float64             `json:"latency_ms"`
-	RequestSize           int64               `json:"request_size"`
-	ResponseSize          int64               `json:"response_size"`
-	RequestHeaders        map[string][]string `json:"request_headers,omitempty"`
-	RequestBody           []byte              `json:"request_body,omitempty"`
-	RequestBodyTruncated  bool                `json:"request_body_truncated,omitempty"`
-	ResponseHeaders       map[string][]string `json:"response_headers,omitempty"`
-	ResponseBody          []byte              `json:"response_body,omitempty"`
-	ResponseBodyTruncated bool                `json:"response_body_truncated,omitempty"`
-}
-
-type connectionInfo struct {
-	Source     string  `json:"source"`
-	Target     string  `json:"target"`
-	Ingress    string  `json:"ingress"`
-	BytesIn    int64   `json:"bytes_in"`
-	BytesOut   int64   `json:"bytes_out"`
-	DurationMs float64 `json:"duration_ms"`
-}
-
-type grpcCallInfo struct {
-	Source                string              `json:"source"`
-	Target                string              `json:"target"`
-	Ingress               string              `json:"ingress"`
-	Service               string              `json:"service"`
-	Method                string              `json:"method"`
-	GRPCStatus            string              `json:"grpc_status"`
-	GRPCMessage           string              `json:"grpc_message"`
-	LatencyMs             float64             `json:"latency_ms"`
-	RequestSize           int64               `json:"request_size"`
-	ResponseSize          int64               `json:"response_size"`
-	RequestMetadata       map[string][]string `json:"request_metadata,omitempty"`
-	ResponseMetadata      map[string][]string `json:"response_metadata,omitempty"`
-	RequestBody           []byte              `json:"request_body,omitempty"`
-	RequestBodyTruncated  bool                `json:"request_body_truncated,omitempty"`
-	ResponseBody          []byte              `json:"response_body,omitempty"`
-	ResponseBodyTruncated bool                `json:"response_body_truncated,omitempty"`
-	RequestBodyDecoded    json.RawMessage     `json:"request_body_decoded,omitempty"`
-	ResponseBodyDecoded   json.RawMessage     `json:"response_body_decoded,omitempty"`
-}
-
-type kafkaRequestInfo struct {
-	Source        string  `json:"source"`
-	Target        string  `json:"target"`
-	Ingress       string  `json:"ingress"`
-	APIKey        int16   `json:"api_key"`
-	APIName       string  `json:"api_name"`
-	APIVersion    int16   `json:"api_version"`
-	CorrelationID int32   `json:"correlation_id"`
-	LatencyMs     float64 `json:"latency_ms"`
-	RequestSize   int64   `json:"request_size"`
-	ResponseSize  int64   `json:"response_size"`
-}
-
-// trafficRow is a normalized row ready for display.
-type trafficRow struct {
-	Index    int
-	Time     string // relative to first event
-	Source   string
-	Target   string
-	Protocol string // "HTTP", "gRPC", "TCP"
-	Method   string
-	Path     string // path for HTTP, service/method for gRPC, "—" for TCP
-	Status   string
-	Latency  string
-	Extra    string // e.g. byte counts for TCP
-
-	// Original event, kept for --detail rendering.
-	Event event
-}
-
-type trafficFilter struct {
-	edge     string
-	slowMs   float64
-	status   string
-	protocol string // "http", "grpc", "tcp", or ""
-}
 
 func runTraffic(args []string) error {
 	// Extract the file argument from any position so flags can appear
@@ -125,14 +20,14 @@ func runTraffic(args []string) error {
 
 	fs := flag.NewFlagSet("traffic", flag.ContinueOnError)
 	var (
-		detail   int
-		edge     string
-		slow     string
-		status   string
-		grpc     bool
-		http     bool
-		tcp      bool
-		kafka    bool
+		detail int
+		edge   string
+		slow   string
+		status string
+		grpc   bool
+		http   bool
+		tcp    bool
+		kafka  bool
 	)
 	fs.IntVar(&detail, "detail", 0, "show full detail for request #N")
 	fs.StringVar(&edge, "edge", "", `filter by edge: "source→target", "source", or "→target"`)
@@ -155,31 +50,31 @@ func runTraffic(args []string) error {
 		}
 	}
 
-	var filter trafficFilter
-	filter.edge = edge
-	filter.status = status
+	var filter rigdata.TrafficFilter
+	filter.Edge = edge
+	filter.Status = status
 
 	if slow != "" {
 		d, err := time.ParseDuration(slow)
 		if err != nil {
 			return fmt.Errorf("invalid --slow value %q: %v", slow, err)
 		}
-		filter.slowMs = float64(d) / float64(time.Millisecond)
+		filter.SlowMs = float64(d) / float64(time.Millisecond)
 	}
 
 	switch {
 	case grpc:
-		filter.protocol = "grpc"
+		filter.Protocol = "grpc"
 	case http:
-		filter.protocol = "http"
+		filter.Protocol = "http"
 	case tcp:
-		filter.protocol = "tcp"
+		filter.Protocol = "tcp"
 	case kafka:
-		filter.protocol = "kafka"
+		filter.Protocol = "kafka"
 	}
 
 	// Resolve glob pattern if the argument isn't a direct file path.
-	resolved, err := resolveLogFile(filename)
+	resolved, err := rigdata.ResolveLogFile(filename)
 	if err != nil {
 		return err
 	}
@@ -191,7 +86,7 @@ func runTraffic(args []string) error {
 	}
 	defer f.Close()
 
-	events, err := parseTrafficEvents(f)
+	events, err := rigdata.ParseTrafficEvents(f)
 	if err != nil {
 		return err
 	}
@@ -201,8 +96,8 @@ func runTraffic(args []string) error {
 		return nil
 	}
 
-	rows := buildRows(events)
-	rows = applyFilter(rows, filter)
+	rows := rigdata.BuildRows(events)
+	rows = rigdata.ApplyFilter(rows, filter)
 
 	if len(rows) == 0 {
 		fmt.Fprintln(os.Stderr, "No matching traffic events.")
@@ -217,177 +112,7 @@ func runTraffic(args []string) error {
 	return nil
 }
 
-// parseTrafficEvents reads JSONL and returns only traffic-related events.
-func parseTrafficEvents(r io.Reader) ([]event, error) {
-	var events []event
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024) // up to 1MB lines
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var ev event
-		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNo, err)
-		}
-		switch ev.Type {
-		case typeRequestCompleted, typeConnectionClosed, typeGRPCCallCompleted, typeKafkaRequestCompleted:
-			events = append(events, ev)
-		}
-	}
-	return events, scanner.Err()
-}
-
-// buildRows converts events to display rows, assigning 1-based indices.
-func buildRows(events []event) []trafficRow {
-	if len(events) == 0 {
-		return nil
-	}
-	t0 := events[0].Timestamp
-	rows := make([]trafficRow, len(events))
-	for i, ev := range events {
-		rel := ev.Timestamp.Sub(t0)
-		row := trafficRow{
-			Index: i + 1,
-			Time:  formatDuration(rel),
-			Event: ev,
-		}
-		switch ev.Type {
-		case typeRequestCompleted:
-			r := ev.Request
-			row.Source = r.Source
-			row.Target = r.Target
-			row.Protocol = "HTTP"
-			row.Method = r.Method
-			row.Path = r.Path
-			row.Status = strconv.Itoa(r.StatusCode)
-			row.Latency = formatLatency(r.LatencyMs)
-		case typeGRPCCallCompleted:
-			g := ev.GRPCCall
-			row.Source = g.Source
-			row.Target = g.Target
-			row.Protocol = "gRPC"
-			row.Method = "gRPC"
-			row.Path = g.Service + "/" + g.Method
-			row.Status = g.GRPCStatus
-			row.Latency = formatLatency(g.LatencyMs)
-		case typeConnectionClosed:
-			c := ev.Connection
-			row.Source = c.Source
-			row.Target = c.Target
-			row.Protocol = "TCP"
-			row.Method = "TCP"
-			row.Path = "—"
-			row.Status = "—"
-			row.Latency = formatLatency(c.DurationMs)
-			row.Extra = fmt.Sprintf("%s↑ %s↓", formatBytes(c.BytesIn), formatBytes(c.BytesOut))
-		case typeKafkaRequestCompleted:
-			k := ev.KafkaRequest
-			row.Source = k.Source
-			row.Target = k.Target
-			row.Protocol = "Kafka"
-			row.Method = k.APIName
-			row.Path = fmt.Sprintf("v%d cid:%d", k.APIVersion, k.CorrelationID)
-			row.Status = "—"
-			row.Latency = formatLatency(k.LatencyMs)
-			row.Extra = fmt.Sprintf("%s↑ %s↓", formatBytes(k.RequestSize), formatBytes(k.ResponseSize))
-		}
-		rows[i] = row
-	}
-	return rows
-}
-
-func applyFilter(rows []trafficRow, f trafficFilter) []trafficRow {
-	if f.edge == "" && f.slowMs == 0 && f.status == "" && f.protocol == "" {
-		return rows
-	}
-	var out []trafficRow
-	for _, r := range rows {
-		if !matchEdge(r, f.edge) {
-			continue
-		}
-		if !matchSlow(r, f.slowMs) {
-			continue
-		}
-		if !matchStatus(r, f.status) {
-			continue
-		}
-		if !matchProtocol(r, f.protocol) {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
-func matchEdge(r trafficRow, edge string) bool {
-	if edge == "" {
-		return true
-	}
-	// Normalize arrow: accept both → and ->
-	edge = strings.ReplaceAll(edge, "->", "→")
-	if strings.Contains(edge, "→") {
-		parts := strings.SplitN(edge, "→", 2)
-		src := strings.TrimSpace(parts[0])
-		tgt := strings.TrimSpace(parts[1])
-		if src != "" && !strings.EqualFold(r.Source, src) {
-			return false
-		}
-		if tgt != "" && !strings.EqualFold(r.Target, tgt) {
-			return false
-		}
-		return true
-	}
-	// No arrow: match either source or target.
-	return strings.EqualFold(r.Source, edge) || strings.EqualFold(r.Target, edge)
-}
-
-func matchSlow(r trafficRow, thresholdMs float64) bool {
-	if thresholdMs == 0 {
-		return true
-	}
-	var latencyMs float64
-	switch r.Event.Type {
-	case typeRequestCompleted:
-		latencyMs = r.Event.Request.LatencyMs
-	case typeGRPCCallCompleted:
-		latencyMs = r.Event.GRPCCall.LatencyMs
-	case typeConnectionClosed:
-		latencyMs = r.Event.Connection.DurationMs
-	case typeKafkaRequestCompleted:
-		latencyMs = r.Event.KafkaRequest.LatencyMs
-	}
-	return latencyMs >= thresholdMs
-}
-
-func matchStatus(r trafficRow, status string) bool {
-	if status == "" {
-		return true
-	}
-	// Class match: "4xx", "5xx", etc.
-	if len(status) == 3 && status[1] == 'x' && status[2] == 'x' {
-		classDigit := status[0]
-		if r.Event.Type == typeRequestCompleted {
-			actual := strconv.Itoa(r.Event.Request.StatusCode)
-			return len(actual) == 3 && actual[0] == classDigit
-		}
-		return false // gRPC/TCP don't have HTTP status classes
-	}
-	// Exact match.
-	return strings.EqualFold(r.Status, status)
-}
-
-func matchProtocol(r trafficRow, protocol string) bool {
-	if protocol == "" {
-		return true
-	}
-	return strings.EqualFold(r.Protocol, protocol)
-}
-
-func renderTable(w io.Writer, rows []trafficRow) {
+func renderTable(w io.Writer, rows []rigdata.TrafficRow) {
 	// Build service → color index map in order of first appearance.
 	serviceIndex := map[string]int{}
 	for _, r := range rows {
@@ -466,35 +191,6 @@ func renderTable(w io.Writer, rows []trafficRow) {
 			}
 		}
 		fmt.Fprintln(w)
-	}
-}
-
-// formatDuration formats a duration as seconds with 3 decimal places.
-func formatDuration(d time.Duration) string {
-	secs := d.Seconds()
-	return fmt.Sprintf("%.3fs", secs)
-}
-
-// formatLatency formats milliseconds into a human-readable string.
-func formatLatency(ms float64) string {
-	if ms < 1 {
-		return fmt.Sprintf("%.0fµs", ms*1000)
-	}
-	if ms < 1000 {
-		return fmt.Sprintf("%.1fms", ms)
-	}
-	return fmt.Sprintf("%.2fs", ms/1000)
-}
-
-// formatBytes formats byte counts into a compact human-readable string.
-func formatBytes(b int64) string {
-	switch {
-	case b < 1024:
-		return fmt.Sprintf("%dB", b)
-	case b < 1024*1024:
-		return fmt.Sprintf("%.1fKB", float64(b)/1024)
-	default:
-		return fmt.Sprintf("%.1fMB", float64(b)/(1024*1024))
 	}
 }
 

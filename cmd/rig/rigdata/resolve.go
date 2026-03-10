@@ -1,4 +1,4 @@
-package main
+package rigdata
 
 import (
 	"fmt"
@@ -7,9 +7,12 @@ import (
 	"sort"
 )
 
-// defaultRigDir returns the base rig directory. Mirrors the server's
+// open is used by ReadHeader to avoid importing os in parse.go's public API.
+func open(path string) (*os.File, error) { return os.Open(path) }
+
+// DefaultRigDir returns the base rig directory. Mirrors the server's
 // DefaultRigDir logic without importing the server package.
-func defaultRigDir() string {
+func DefaultRigDir() string {
 	if dir := os.Getenv("RIG_DIR"); dir != "" {
 		return dir
 	}
@@ -20,34 +23,34 @@ func defaultRigDir() string {
 	return filepath.Join(home, ".rig")
 }
 
-// logDir returns the directory containing JSONL log files. If RIG_LOGS is
+// LogDir returns the directory containing JSONL log files. If RIG_LOGS is
 // set, it is used directly; otherwise falls back to {rigDir}/logs/.
-func logDir() string {
+func LogDir() string {
 	if dir := os.Getenv("RIG_LOGS"); dir != "" {
 		return dir
 	}
-	return filepath.Join(defaultRigDir(), "logs")
+	return filepath.Join(DefaultRigDir(), "logs")
 }
 
-// scanLogDir returns all .jsonl file paths in logDir() whose base
+// ScanLogDir returns all .jsonl file paths in LogDir() whose base
 // filename (without extension) matches the given glob pattern. Pass "" to
 // match all files. Results are sorted lexicographically (chronological
 // since IDs are time-prefixed).
-func scanLogDir(pattern string) ([]string, error) {
-	return scanDir(logDir(), pattern)
+func ScanLogDir(pattern string) ([]string, error) {
+	return ScanDir(LogDir(), pattern)
 }
 
-// scanDir returns all .jsonl file paths in dir whose base filename
+// ScanDir returns all .jsonl file paths in dir whose base filename
 // (without extension) matches the given glob pattern. Pass "" to match
 // all files. Results are sorted lexicographically.
-func scanDir(dir, pattern string) ([]string, error) {
+func ScanDir(dir, pattern string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
 
 	glob := pattern
-	if glob != "" && !hasGlobMeta(glob) {
+	if glob != "" && !HasGlobMeta(glob) {
 		glob = "*" + glob + "*"
 	}
 
@@ -69,35 +72,33 @@ func scanDir(dir, pattern string) ([]string, error) {
 	return paths, nil
 }
 
-// resolveLogFile resolves a user-provided argument to a JSONL log file path.
+// ResolveLogFile resolves a user-provided argument to a JSONL log file path.
 // If the argument is an existing file or contains a path separator, it is
 // returned as-is. Otherwise it is treated as a glob pattern and matched
 // against filenames (without .jsonl extension) in {rigDir}/logs/. If multiple
 // files match, the most recent (last lexicographically, since IDs are
 // time-prefixed) is returned.
-func resolveLogFile(arg string) (string, error) {
-	// Direct file path.
+func ResolveLogFile(arg string) (string, error) {
 	if _, err := os.Stat(arg); err == nil {
 		return arg, nil
 	}
-	// If it contains a path separator, it was meant as a path — don't glob.
 	if filepath.Base(arg) != arg {
 		return "", fmt.Errorf("file not found: %s", arg)
 	}
 
-	matches, err := scanLogDir(arg)
+	matches, err := ScanLogDir(arg)
 	if err != nil {
 		return "", fmt.Errorf("cannot read log directory: %w", err)
 	}
 	if len(matches) == 0 {
 		return "", fmt.Errorf("no log files matching %q in %s",
-			arg, logDir())
+			arg, LogDir())
 	}
 	return matches[len(matches)-1], nil
 }
 
-// hasGlobMeta reports whether s contains glob metacharacters.
-func hasGlobMeta(s string) bool {
+// HasGlobMeta reports whether s contains glob metacharacters.
+func HasGlobMeta(s string) bool {
 	for _, c := range s {
 		switch c {
 		case '*', '?', '[':

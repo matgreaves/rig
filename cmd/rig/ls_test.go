@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/matgreaves/rig/cmd/rig/rigdata"
 )
 
 func TestReadHeader(t *testing.T) {
-	hdr, err := readHeader("testdata/passed.jsonl")
+	hdr, err := rigdata.ReadHeader("testdata/passed.jsonl")
 	if err != nil {
-		t.Fatalf("readHeader: %v", err)
+		t.Fatalf("ReadHeader: %v", err)
 	}
 	if hdr.Type != "log.header" {
 		t.Errorf("type = %q, want log.header", hdr.Type)
@@ -30,9 +32,9 @@ func TestReadHeader(t *testing.T) {
 }
 
 func TestReadHeaderFailed(t *testing.T) {
-	hdr, err := readHeader("testdata/failed.jsonl")
+	hdr, err := rigdata.ReadHeader("testdata/failed.jsonl")
 	if err != nil {
-		t.Fatalf("readHeader: %v", err)
+		t.Fatalf("ReadHeader: %v", err)
 	}
 	if hdr.Outcome != "failed" {
 		t.Errorf("outcome = %q, want failed", hdr.Outcome)
@@ -44,7 +46,7 @@ func TestReadHeaderFailed(t *testing.T) {
 
 func TestReadHeaderNotAHeader(t *testing.T) {
 	// mixed_traffic.jsonl starts with a normal event, not a log.header.
-	_, err := readHeader("testdata/mixed_traffic.jsonl")
+	_, err := rigdata.ReadHeader("testdata/mixed_traffic.jsonl")
 	if err == nil {
 		t.Fatal("expected error for non-header first line")
 	}
