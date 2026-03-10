@@ -44,6 +44,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "rig ci: %v\n", err)
 			os.Exit(1)
 		}
+	case "ps":
+		if err := runPs(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rig ps: %v\n", err)
+			os.Exit(1)
+		}
+	case "down":
+		if err := runDown(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "rig down: %v\n", err)
+			os.Exit(1)
+		}
 	case "prune":
 		if err := runPrune(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "rig prune: %v\n", err)
@@ -62,6 +72,8 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: rig <command> [flags]
 
 Commands:
+  ps                     List active environments on rigd
+  down    <env>          Tear down an active environment
   traffic <file>         Inspect traffic captured by rigd
   logs    <file>         View service logs
   ls      [pattern]      List recent log files

@@ -15,6 +15,7 @@ type specEnvironment struct {
 	Observe  bool                   `json:"observe,omitempty"`
 	HostEnv  map[string]string      `json:"host_env,omitempty"`
 	Dir      string                 `json:"dir,omitempty"`
+	TTL      string                 `json:"ttl,omitempty"`
 }
 
 type specService struct {

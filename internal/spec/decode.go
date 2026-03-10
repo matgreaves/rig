@@ -16,6 +16,7 @@ func DecodeEnvironment(data []byte) (Environment, error) {
 		Observe  bool                       `json:"observe"`
 		HostEnv  map[string]string          `json:"host_env"`
 		Dir      string                     `json:"dir"`
+		TTL      string                     `json:"ttl"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Environment{}, err
@@ -32,6 +33,7 @@ func DecodeEnvironment(data []byte) (Environment, error) {
 		Observe:  raw.Observe,
 		HostEnv:  raw.HostEnv,
 		Dir:      raw.Dir,
+		TTL:      raw.TTL,
 	}
 
 	for svcName, svcData := range raw.Services {

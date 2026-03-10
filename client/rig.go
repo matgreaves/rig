@@ -127,6 +127,7 @@ type options struct {
 	serverURL      string
 	startupTimeout time.Duration
 	observe        bool
+	ttl            string
 }
 
 func defaultOptions() options {
@@ -134,6 +135,7 @@ func defaultOptions() options {
 		serverURL:      os.Getenv("RIG_SERVER_ADDR"),
 		startupTimeout: 2 * time.Minute,
 		observe:        true,
+		ttl:            os.Getenv("RIG_TTL"),
 	}
 }
 
@@ -155,6 +157,14 @@ func WithTimeout(d time.Duration) Option {
 // to disable that behavior.
 func WithoutObserve() Option {
 	return func(o *options) { o.observe = false }
+}
+
+// WithTTL sets a maximum lifetime for the environment. When set, the
+// environment auto-destroys after the specified duration and the client
+// skips sending DELETE on cleanup, allowing the environment to outlive
+// the test process for manual inspection.
+func WithTTL(d time.Duration) Option {
+	return func(o *options) { o.ttl = d.String() }
 }
 
 // Up creates an environment, blocks until all services are ready, and
@@ -191,10 +201,18 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 	// Trim trailing slash for consistent URL construction.
 	o.serverURL = strings.TrimRight(o.serverURL, "/")
 
+	// Validate TTL early so the user gets a clear error instead of a
+	// spec validation failure from the server.
+	if o.ttl != "" {
+		if _, err := time.ParseDuration(o.ttl); err != nil {
+			return nil, fmt.Errorf("rig: invalid RIG_TTL %q: %v", o.ttl, err)
+		}
+	}
+
 	// Collect handlers during spec conversion.
 	handlers := make(map[string]hookFunc)
 	startHandlers := make(map[string]startFunc)
-	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers, o.observe)
+	specEnv, err := envToSpec(t.Name(), services, handlers, startHandlers, o)
 	if err != nil {
 		return nil, fmt.Errorf("rig: build spec: %v", err)
 	}
@@ -244,10 +262,19 @@ func TryUp(t testing.TB, services Services, opts ...Option) (*Environment, error
 
 	// Register cleanup: stop functions, destroy the environment.
 	// Always write the event log so it's available for inspection.
+	// When TTL is set, skip DELETE — the server will tear down on expiry.
 	// envDir is captured by reference and set after streaming succeeds.
 	var envDir string
 	t.Cleanup(func() {
 		funcCancel()
+
+		if o.ttl != "" {
+			t.Logf("rig: environment has TTL %s — skipping teardown", o.ttl)
+			t.Logf("rig: use 'rig ps' to list active environments")
+			t.Logf("rig: use 'rig down %s' to tear down early", envID)
+			return
+		}
+
 		preserve := os.Getenv("RIG_PRESERVE") == "true" ||
 			(t.Failed() && os.Getenv("RIG_PRESERVE_ON_FAILURE") == "true")
 		result := destroyEnvironment(o.serverURL, envID, preserve, t.Failed())

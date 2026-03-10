@@ -45,8 +45,10 @@ type envInstance struct {
 	preserve *bool  // shared with Orchestrator; set to true to skip cleanup
 	reason   string // client-signalled teardown reason (e.g. "test_failed")
 
-	cancel context.CancelFunc
-	done   <-chan error // receives runner's terminal error (buffered 1)
+	cancel      context.CancelFunc
+	done        <-chan error // receives runner's terminal error (buffered 1)
+	ttlTimer    *time.Timer // stopped on teardown to prevent double-fire
+	ttlDeadline time.Time   // when the TTL expires; used by GET /environments
 }
 
 // NewServer creates a Server and registers all HTTP routes.
@@ -81,6 +83,7 @@ func NewServer(
 	s.mux.HandleFunc("GET /environments/{id}/events", s.handleSSE)
 	s.mux.HandleFunc("POST /environments/{id}/events", s.handleClientEvent)
 	s.mux.HandleFunc("DELETE /environments/{id}", s.handleDeleteEnvironment)
+	s.mux.HandleFunc("GET /environments", s.handleListEnvironments)
 	s.mux.HandleFunc("GET /environments/{id}", s.handleGetEnvironment)
 	s.mux.HandleFunc("GET /environments/{id}/log", s.handleGetLog)
 
@@ -194,6 +197,24 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	s.mu.Unlock()
 
 	s.idle.EnvironmentCreated()
+
+	// Every environment gets a TTL. An explicit TTL from the spec means
+	// the user wants the environment to outlive the test for inspection.
+	// The default TTL is a safety backstop: well-behaved clients send
+	// DELETE long before it fires, but if the client is killed (ctrl+C,
+	// kill -9) the environment won't leak forever.
+	ttl := defaultTTL
+	if env.TTL != "" {
+		// Already validated by this point, so ParseDuration cannot fail.
+		ttl, _ = time.ParseDuration(env.TTL)
+	}
+	inst.ttlDeadline = time.Now().Add(ttl)
+	inst.ttlTimer = time.AfterFunc(ttl, func() {
+		s.teardownEnvironment(id, teardownOpts{
+			reason:   "ttl_expired",
+			writeLog: true,
+		})
+	})
 
 	go func() {
 		err := runner.Run(ctx)
@@ -316,14 +337,29 @@ func (s *Server) handleClientEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleDeleteEnvironment handles DELETE /environments/{id}.
-//
-// Cancels the runner, blocks until it exits, releases ports, then removes the
-// environment from the active set. Returns once teardown is complete.
-func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+// teardownOpts controls how teardownEnvironment behaves.
+type teardownOpts struct {
+	preserve bool   // skip temp dir cleanup
+	reason   string // e.g. "test_failed", "ttl_expired", "orphaned"
+	writeLog bool   // write event log to disk
+}
 
-	// Remove from map immediately so concurrent DELETEs get 404.
+// teardownResult holds the outcome of an environment teardown.
+type teardownResult struct {
+	OK            bool   // false if the environment was not found (already torn down)
+	EnvDir        string // the environment's temp directory
+	LogFile       string // structured JSONL event log path
+	LogFilePretty string // human-readable timeline path
+	Summary       string // condensed failure diagnosis
+}
+
+// teardownEnvironment performs the full teardown sequence for an environment:
+// removes it from the active map, cancels the runner, waits for it to exit,
+// releases ports, and optionally writes the event log to disk.
+//
+// Safe to call concurrently — only the first caller for a given ID proceeds;
+// subsequent calls return OK=false.
+func (s *Server) teardownEnvironment(id string, opts teardownOpts) teardownResult {
 	s.mu.Lock()
 	inst, ok := s.envs[id]
 	if ok {
@@ -332,13 +368,11 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 	s.mu.Unlock()
 
 	if !ok {
-		writeError(w, http.StatusNotFound, "environment not found")
-		return
+		return teardownResult{}
 	}
 
 	// Only emit environment.destroying if the environment is still running.
-	// If a service crash already brought it down, destroying doesn't apply —
-	// nobody requested teardown, it just died.
+	// If a service crash already brought it down, destroying doesn't apply.
 	alreadyDown := false
 	for _, e := range inst.log.LifecycleEvents() {
 		if e.Type == EventEnvironmentDown {
@@ -353,17 +387,14 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	// Set preserve flag before cancelling so the orchestrator's cleanup
-	// defer sees it. Supports both query param and server-wide env var.
-	if r.URL.Query().Get("preserve") == "true" || os.Getenv("RIG_PRESERVE") == "true" {
+	if opts.preserve || os.Getenv("RIG_PRESERVE") == "true" {
 		if inst.preserve != nil {
 			*inst.preserve = true
 		}
 	}
 
-	// Record client-signalled reason (e.g. "test_failed") for outcome derivation.
-	if reason := r.URL.Query().Get("reason"); reason != "" {
-		inst.reason = reason
+	if opts.reason != "" {
+		inst.reason = opts.reason
 	}
 
 	inst.cancel()
@@ -372,19 +403,63 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 	s.ports.Release(id)
 	s.idle.EnvironmentDestroyed()
 
+	// Stop TTL timer if set, to prevent a fire-after-teardown race.
+	if inst.ttlTimer != nil {
+		inst.ttlTimer.Stop()
+	}
+
+	result := teardownResult{OK: true, EnvDir: inst.envDir}
+	if opts.writeLog {
+		if jp, lp, err := s.writeEventLog(inst); err == nil {
+			result.LogFile = jp
+			result.LogFilePretty = lp
+			if sm := explain.CondensedFile(jp); sm != "" {
+				result.Summary = sm
+			}
+		}
+	}
+
+	return result
+}
+
+// defaultTTL is the maximum lifetime for environments that don't specify an
+// explicit TTL. This is a safety backstop — well-behaved clients send DELETE
+// long before it fires. It prevents environments from leaking forever if
+// the client process is killed without cleanup (ctrl+C, kill -9, etc.).
+const defaultTTL = 10 * time.Minute
+
+// handleDeleteEnvironment handles DELETE /environments/{id}.
+//
+// Cancels the runner, blocks until it exits, releases ports, then removes the
+// environment from the active set. Returns once teardown is complete.
+func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	opts := teardownOpts{
+		preserve: r.URL.Query().Get("preserve") == "true",
+		reason:   r.URL.Query().Get("reason"),
+		writeLog: r.URL.Query().Get("log") == "true",
+	}
+
+	tr := s.teardownEnvironment(id, opts)
+	if !tr.OK {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+
 	result := map[string]any{
 		"id":      id,
 		"status":  "destroyed",
-		"env_dir": inst.envDir,
+		"env_dir": tr.EnvDir,
 	}
-	if r.URL.Query().Get("log") == "true" {
-		if jsonlPath, logPath, err := s.writeEventLog(inst); err == nil {
-			result["log_file"] = jsonlPath
-			result["log_file_pretty"] = logPath
-			if summary := explain.CondensedFile(jsonlPath); summary != "" {
-				result["summary"] = summary
-			}
-		}
+	if tr.LogFile != "" {
+		result["log_file"] = tr.LogFile
+	}
+	if tr.LogFilePretty != "" {
+		result["log_file_pretty"] = tr.LogFilePretty
+	}
+	if tr.Summary != "" {
+		result["summary"] = tr.Summary
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -653,6 +728,57 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inst.log.Events())
+}
+
+// envListEntry is the JSON representation of an active environment in the
+// GET /environments response.
+type envListEntry struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	TTL          string   `json:"ttl,omitempty"`
+	RemainingTTL string   `json:"remaining_ttl"`
+	Services     []string `json:"services"`
+}
+
+// handleListEnvironments handles GET /environments.
+//
+// Returns a JSON array of all active environments with their IDs, names,
+// TTL, and service names. Used by `rig ps` and `rig down` for name resolution.
+func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	s.mu.Lock()
+	entries := make([]envListEntry, 0, len(s.envs))
+	for _, inst := range s.envs {
+		serviceNames := make([]string, 0, len(inst.spec.Services))
+		for name, svc := range inst.spec.Services {
+			if svc.Injected {
+				continue
+			}
+			serviceNames = append(serviceNames, name)
+		}
+		sort.Strings(serviceNames)
+
+		remaining := inst.ttlDeadline.Sub(now)
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		entries = append(entries, envListEntry{
+			ID:           inst.id,
+			Name:         inst.spec.Name,
+			TTL:          inst.spec.TTL,
+			RemainingTTL: remaining.Truncate(time.Second).String(),
+			Services:     serviceNames,
+		})
+	}
+	s.mu.Unlock()
+
+	// Sort by name for stable output.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
+
+	writeJSON(w, http.StatusOK, entries)
 }
 
 // logHeader is the synthetic first line of a JSONL event log. It contains
